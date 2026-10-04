@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,23 +7,25 @@ name = "universal-ai-config"
 version = "0.1.0"
 description = "Unified configuration management for AI agents across multiple providers"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
-    {name = "Universal AI Config", email = "universal-ai@example.com"}
+    {name = "DevArts Lab"}
 ]
 keywords = ["ai", "configuration", "devin", "windsurf", "claude", "mcp"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-requires-python = ">=3.8"
+requires-python = ">=3.9"
 dependencies = []
 
 [project.optional-dependencies]
@@ -38,9 +40,9 @@ dev = [
 ai-config = "universal_ai_config.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/DevArtsLab/universal-ai-config"
-Repository = "https://github.com/DevArtsLab/universal-ai-config"
-Issues = "https://github.com/DevArtsLab/universal-ai-config/issues"
+Homepage = "https://github.com/DevArtsLab/tool-universal-ai-config"
+Repository = "https://github.com/DevArtsLab/tool-universal-ai-config"
+Issues = "https://github.com/DevArtsLab/tool-universal-ai-config/issues"
 
 [tool.setuptools]
 packages = ["universal_ai_config"]

@@ -13,25 +13,44 @@ A unified configuration system for AI agents across multiple providers (Devin, W
 
 ## Installation
 
-### One-Line Install (Recommended)
+### Package Manager (Recommended)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/install.sh | bash
+# uv (or run without installing: uvx ai-config --help)
+uv tool install universal-ai-config
+
+# pipx
+pipx install universal-ai-config
+
+# pip
+pip install universal-ai-config
 ```
 
-This will:
+### One-Line Install
 
-- Download and install the package
-- Set up the `ai-config` command
+```bash
+curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/install.sh | bash
+```
+
+The installer prefers uv or pipx when available, and falls back to a managed
+virtual environment. It will:
+
+- Install the package and set up the `ai-config` command
 - Detect and migrate existing configurations
 - Initialize the unified config structure
+
+### Standalone Binaries
+
+Prebuilt binaries for Linux, macOS (Intel and Apple Silicon), and Windows are
+attached to each [GitHub release](https://github.com/DevArtsLab/tool-universal-ai-config/releases)
+— no Python required.
 
 ### Manual Install
 
 ```bash
 # Clone the repository
-git clone https://github.com/DevArtsLab/universal-ai-config.git
-cd universal-ai-config
+git clone https://github.com/DevArtsLab/tool-universal-ai-config.git
+cd tool-universal-ai-config
 
 # Install via pip
 pip install -e .
@@ -257,8 +276,8 @@ Legacy configs are backed up with `.backup` extension.
 ### Setup Development Environment
 
 ```bash
-git clone https://github.com/DevArtsLab/universal-ai-config.git
-cd universal-ai-config
+git clone https://github.com/DevArtsLab/tool-universal-ai-config.git
+cd tool-universal-ai-config
 pip install -e ".[dev]"
 ```
 
@@ -290,5 +309,5 @@ Contributions welcome! Please read our contributing guidelines before submitting
 
 ## Support
 
-- GitHub Issues: https://github.com/DevArtsLab/universal-ai-config/issues
-- Documentation: https://github.com/DevArtsLab/universal-ai-config/wiki
+- GitHub Issues: https://github.com/DevArtsLab/tool-universal-ai-config/issues
+- Documentation: https://github.com/DevArtsLab/tool-universal-ai-config/wiki

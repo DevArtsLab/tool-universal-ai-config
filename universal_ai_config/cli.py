@@ -3,6 +3,7 @@ CLI interface for universal AI configuration management.
 """
 
 import json
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
@@ -306,9 +307,6 @@ class CLI:
         except ConfigError as e:
             print(f"Error: {e}")
             sys.exit(1)
-
-
-import shutil
 
 
 def main():

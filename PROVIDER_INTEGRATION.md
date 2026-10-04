@@ -286,5 +286,5 @@ ai-config set-config my-provider model project-model
 
 For integration issues:
 
-- GitHub Issues: https://github.com/DevArtsLab/universal-ai-config/issues
-- Documentation: https://github.com/DevArtsLab/universal-ai-config/wiki
+- GitHub Issues: https://github.com/DevArtsLab/tool-universal-ai-config/issues
+- Documentation: https://github.com/DevArtsLab/tool-universal-ai-config/wiki

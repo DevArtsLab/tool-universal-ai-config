@@ -1,170 +1,136 @@
 # Deployment Guide
 
-This guide explains how to deploy the Universal AI Configuration Manager to GitHub for public distribution.
+This guide covers releasing and distributing the Universal AI Configuration
+Manager.
 
-## Prerequisites
+Repository: `https://github.com/DevArtsLab/tool-universal-ai-config`
+PyPI name: `universal-ai-config` (CLI command: `ai-config`)
 
-- GitHub account
-- GitHub CLI (gh) or git command-line tools
-- Repository created at: `https://github.com/DevArtsLab/universal-ai-config`
+## Distribution Channels
 
-## Deployment Steps
+| Channel         | How users install                                                                                            | Status                    |
+| --------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| PyPI            | `uv tool install universal-ai-config`, `pipx install universal-ai-config`, `pip install universal-ai-config` | Automated on tag          |
+| GitHub Releases | Standalone binaries (`ai-config-<os>-<arch>`)                                                                | Automated on tag          |
+| curl installer  | `curl -fsSL .../install.sh \| bash`                                                                          | Uses uv/pipx when present |
+| Homebrew        | `brew install DevArtsLab/tap/ai-config`                                                                      | Manual (see below)        |
 
-### 1. Create GitHub Repository
+## One-Time Setup
 
-```bash
-# Create repository using GitHub CLI
-gh repo create DevArtsLab/universal-ai-config --public --description "Unified configuration management for AI agents across multiple providers"
+### PyPI Trusted Publishing (recommended)
 
-# Or create manually at https://github.com/new
-```
+The publish workflow uses OIDC trusted publishing — no API tokens needed.
 
-### 2. Push to GitHub
+1. Go to https://pypi.org/manage/account/publishing/ (or create the project
+   first via a pending publisher)
+2. Add a publisher:
+   - Owner: `DevArtsLab`
+   - Repository: `tool-universal-ai-config`
+   - Workflow: `publish.yml`
+   - Environment: `pypi`
+3. In the GitHub repo, create an environment named `pypi`
+   (Settings → Environments → New environment)
 
-```bash
-cd /Users/ao/universal-ai-config
+Alternative: create a `PYPI_API_TOKEN` repo secret and pass it to the publish
+step with `password: ${{ secrets.PYPI_API_TOKEN }}`.
 
-# Add remote (replace with your GitHub username if different)
-git remote add origin https://github.com/DevArtsLab/universal-ai-config.git
+## Release Process
 
-# Push to main branch
-git push -u origin main
-```
-
-### 3. Verify Installation Script
-
-After pushing, test the installation script:
-
-```bash
-# Test on a clean system or in a fresh environment
-curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/install.sh | bash
-```
-
-### 4. Create GitHub Release (Optional)
-
-For versioned releases:
+Everything is driven by git tags:
 
 ```bash
-# Create a tag
+# 1. Bump version in pyproject.toml
+# 2. Commit and push to main
+# 3. Tag and push
 git tag v0.1.0
 git push origin v0.1.0
-
-# Create release using GitHub CLI
-gh release create v0.1.0 \
-  --title "v0.1.0 - Initial Release" \
-  --notes "Initial release of Universal AI Configuration Manager"
 ```
 
-### 5. Update Installation Documentation
+Pushing a `v*` tag runs `.github/workflows/publish.yml`, which:
 
-Update the README.md with the correct repository URL:
+1. Verifies the tag matches `pyproject.toml` version
+2. Builds sdist + wheel
+3. Publishes to PyPI (trusted publishing)
+4. Builds PyInstaller binaries (linux-x86_64, macos-x86_64, macos-arm64,
+   windows-x86_64) and smoke-tests each
+5. Creates a GitHub release with the binaries attached
 
-```bash
-# Already updated to: https://github.com/DevArtsLab/universal-ai-config
-```
+The tag must match the `version` field in `pyproject.toml` or the workflow
+fails.
 
-## User Installation
-
-Once deployed, users can install with:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/install.sh | bash
-```
-
-## Uninstallation
-
-Users can uninstall with:
+## Manual PyPI Upload (fallback)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/uninstall.sh | bash
-```
-
-## Verification Checklist
-
-- [ ] Repository created at correct URL
-- [ ] Code pushed to main branch
-- [ ] install.sh is executable and in repository
-- [ ] uninstall.sh is executable and in repository
-- [ ] Installation script works on clean system
-- [ ] Migration works for existing users
-- [ ] Documentation URLs are correct
-- [ ] README.md installation instructions work
-
-## Post-Deployment
-
-### Monitor Issues
-
-Watch for:
-- Installation issues on different platforms
-- Migration problems with specific providers
-- Feature requests from users
-
-### Update Documentation
-
-Keep these files updated:
-- README.md - Main documentation
-- INSTALL.md - Installation guide
-- PROVIDER_INTEGRATION.md - Developer guide
-
-### Release New Versions
-
-When making updates:
-1. Update version in `pyproject.toml`
-2. Update `universal_ai_config/__init__.py`
-3. Create git tag: `git tag v0.2.0`
-4. Push tag: `git push origin v0.2.0`
-5. Create GitHub release
-
-## Alternative Distribution Methods
-
-### PyPI Distribution
-
-To publish to PyPI:
-
-```bash
-# Build package
+pip install build twine
 python -m build
-
-# Install twine if not already installed
-pip install twine
-
-# Upload to PyPI (requires PyPI account)
 twine upload dist/*
 ```
 
-Then users can install via:
-```bash
-pip install universal-ai-config
-```
+## Homebrew Tap
 
-### Homebrew Formula (macOS)
-
-Create a Homebrew formula for macOS users:
+Create `DevArtsLab/homebrew-tap` and add `Formula/ai-config.rb`:
 
 ```ruby
-# Formula/universal-ai-config.rb
-class UniversalAiConfig < Formula
+class AiConfig < Formula
+  include Language::Python::Virtualenv
+
   desc "Unified configuration management for AI agents"
-  homepage "https://github.com/DevArtsLab/universal-ai-config"
-  url "https://github.com/DevArtsLab/universal-ai-config/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "your-sha256-here"
+  homepage "https://github.com/DevArtsLab/tool-universal-ai-config"
+  url "https://files.pythonhosted.org/packages/source/u/universal-ai-config/universal_ai_config-0.1.0.tar.gz"
+  sha256 "REPLACE-WITH-SDIST-SHA256"
   license "MIT"
 
+  depends_on "python@3.13"
+
   def install
-    libexec.install Dir["*"]
-    bin.install_symlink "#{libexec}/install.sh" => "ai-config-install"
+    virtualenv_install_with_resources
+  end
+
+  test do
+    system bin/"ai-config", "--help"
   end
 end
 ```
 
+Get the sdist URL and sha256 from the PyPI release page
+(`pypi.org/project/universal-ai-config/#files`). Update them on each release.
+Alternatively, generate the formula automatically with
+`brew bump-formula-pr` or homebrew's `poet` tooling.
+
+## User Installation
+
+Once released, users can install with any of:
+
+```bash
+uv tool install universal-ai-config       # or: uvx ai-config
+pipx install universal-ai-config
+pip install universal-ai-config
+curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/install.sh | bash
+```
+
+Or download a standalone binary from the releases page.
+
+## Uninstallation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/uninstall.sh | bash
+```
+
+Removes venv, uv, and pipx installs. Config files in `~/.agents/` are
+preserved unless `--remove-config` is passed.
+
+## Verification Checklist
+
+- [ ] PyPI trusted publisher configured (or `PYPI_API_TOKEN` secret set)
+- [ ] GitHub `pypi` environment created
+- [ ] Tag pushed triggers `publish.yml` successfully
+- [ ] `uvx ai-config --help` works from PyPI
+- [ ] Release binaries download and run (`ai-config-* --help`)
+- [ ] install.sh works on a clean machine (uv, pipx, and bare-python paths)
+
 ## Security Considerations
 
-- Installation script should be reviewed for security
-- Use HTTPS for all downloads
-- Validate GPG signatures if implementing (future enhancement)
-- Keep dependencies minimal and audited
-
-## Support
-
-For deployment issues:
-- GitHub Issues: https://github.com/DevArtsLab/universal-ai-config/issues
+- OIDC trusted publishing avoids long-lived PyPI tokens
+- All downloads use HTTPS
+- Pin `actions/*` and `pypa/gh-action-pypi-publish` by tag (current practice:
+  major version tags); consider SHA pinning for stricter supply-chain control

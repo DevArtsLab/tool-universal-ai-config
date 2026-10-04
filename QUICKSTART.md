@@ -5,7 +5,7 @@
 ### New System Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/install.sh | bash
 ```
 
 This will:
@@ -18,7 +18,7 @@ This will:
 ### Existing System Migration
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/install.sh | bash
 ```
 
 The installer will:
@@ -105,7 +105,7 @@ After installation:
 ## Uninstallation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/uninstall.sh | bash
 ```
 
 ## Troubleshooting
@@ -142,13 +142,13 @@ ai-config validate
 
 ```bash
 # Uninstall first
-curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/uninstall.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/uninstall.sh | bash
 
 # Reinstall
-curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/install.sh | bash
 ```
 
 ## Support
 
-- GitHub Issues: https://github.com/DevArtsLab/universal-ai-config/issues
-- Documentation: https://github.com/DevArtsLab/universal-ai-config/wiki
+- GitHub Issues: https://github.com/DevArtsLab/tool-universal-ai-config/issues
+- Documentation: https://github.com/DevArtsLab/tool-universal-ai-config/wiki

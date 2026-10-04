@@ -2,8 +2,8 @@
 
 # Universal AI Configuration Installer
 # Usage:
-#   Interactive: curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/install.sh | bash
-#   Non-interactive: curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/install.sh | bash -s -- --yes
+#   Interactive: curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/install.sh | bash
+#   Non-interactive: curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/install.sh | bash -s -- --yes
 
 set -e
 
@@ -44,7 +44,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration
-REPO="DevArtsLab/universal-ai-config"
+REPO="DevArtsLab/tool-universal-ai-config"
 BRANCH="main"
 INSTALL_DIR="${HOME}/.universal-ai-config"
 VENV_DIR="${INSTALL_DIR}/venv"
@@ -122,12 +122,24 @@ detect_existing_installation() {
     if [ -d "$INSTALL_DIR" ]; then
         print_warning "Existing installation found at $INSTALL_DIR"
         
-        if confirm "Do you want to remove it and reinstall?" "N"; then
-            print_info "Removing existing installation..."
-            rm -rf "$INSTALL_DIR"
+        # Check whether the existing install actually works
+        if [ -x "$VENV_DIR/bin/python3" ] && "$VENV_DIR/bin/python3" -c "import universal_ai_config" 2>/dev/null; then
+            if confirm "Do you want to remove it and reinstall?" "N"; then
+                print_info "Removing existing installation..."
+                rm -rf "$INSTALL_DIR"
+            else
+                print_info "Keeping existing installation"
+                exit 0
+            fi
         else
-            print_info "Keeping existing installation"
-            exit 0
+            print_warning "Existing installation appears broken"
+            if confirm "Remove it and reinstall?" "Y"; then
+                print_info "Removing broken installation..."
+                rm -rf "$INSTALL_DIR"
+            else
+                print_info "Keeping existing installation"
+                exit 0
+            fi
         fi
     fi
 }
@@ -188,11 +200,13 @@ download_package() {
     
     print_success "Downloaded package"
     
-    # Extract
+    # Extract (top-level dir is "<repo>-<branch>", resolve it dynamically)
     print_info "Extracting package..."
+    local extract_dir
+    extract_dir=$(tar -tzf universal-ai-config.tar.gz | head -1 | cut -d/ -f1)
     tar -xzf universal-ai-config.tar.gz
-    mv "universal-ai-config-${BRANCH}"/* .
-    rm -rf "universal-ai-config-${BRANCH}" universal-ai-config.tar.gz
+    mv "$extract_dir"/* .
+    rm -rf "$extract_dir" universal-ai-config.tar.gz
     print_success "Extracted package"
 }
 
@@ -209,10 +223,41 @@ install_via_pip() {
     # Upgrade pip
     pip install --upgrade pip
     
-    # Install package
-    pip install -e .
+    # Install package (editable only for local dev installs, so the
+    # installation does not break if the source directory moves)
+    if [ "$USE_LOCAL" = true ]; then
+        pip install -e .
+    else
+        pip install .
+    fi
     
     print_success "Installed package"
+}
+
+install_via_tool() {
+    # Prefer uv or pipx: they manage the isolated environment and PATH entry
+    # themselves, and install straight from PyPI (with a git fallback).
+    if command -v uv &> /dev/null; then
+        print_info "Installing via uv..."
+        if uv tool install --force universal-ai-config 2>/dev/null \
+            || uv tool install --force "git+https://github.com/${REPO}"; then
+            print_success "Installed via uv"
+            return 0
+        fi
+        print_warning "uv install failed, trying next method..."
+    fi
+    
+    if command -v pipx &> /dev/null; then
+        print_info "Installing via pipx..."
+        if pipx install --force universal-ai-config 2>/dev/null \
+            || pipx install --force "git+https://github.com/${REPO}.git"; then
+            print_success "Installed via pipx"
+            return 0
+        fi
+        print_warning "pipx install failed, falling back to venv..."
+    fi
+    
+    return 1
 }
 
 create_symlink() {
@@ -295,50 +340,35 @@ prompt_migration() {
     return 1
 }
 
+run_ai_config() {
+    # Run ai-config regardless of how it was installed (venv, uv, or pipx)
+    if [ -f "$VENV_DIR/bin/activate" ]; then
+        source "$VENV_DIR/bin/activate"
+    fi
+    PATH="$HOME/.local/bin:$PATH" ai-config "$@"
+}
+
 initialize_config() {
     print_info "Initializing configuration..."
-    
-    # Activate virtual environment
-    source "$VENV_DIR/bin/activate"
-    
-    # Initialize
-    ai-config init
-    
+    run_ai_config init
     print_success "Configuration initialized"
 }
 
 migrate_configs() {
     print_info "Migrating legacy configurations..."
-    
-    # Activate virtual environment
-    source "$VENV_DIR/bin/activate"
-    
-    # Migrate
-    ai-config migrate
-    
+    run_ai_config migrate
     print_success "Migration complete"
 }
 
 validate_installation() {
     print_info "Validating installation..."
-    
-    # Activate virtual environment
-    source "$VENV_DIR/bin/activate"
-    
-    # Validate
-    ai-config validate
-    
+    run_ai_config validate
     print_success "Installation validated"
 }
 
 show_status() {
     print_info "Installation status:"
-    
-    # Activate virtual environment
-    source "$VENV_DIR/bin/activate"
-    
-    # Show status
-    ai-config status
+    run_ai_config status
 }
 
 cleanup() {
@@ -352,24 +382,28 @@ main() {
     echo "======================================"
     echo ""
     
-    # Check prerequisites
-    check_python
-    check_pip
-    
-    # Detect existing installation
-    detect_existing_installation
-    
-    # Create install directory
-    create_install_dir
-    
-    # Download package
-    download_package
-    
-    # Install via pip
-    install_via_pip
-    
-    # Create symlink
-    create_symlink
+    if [ "$USE_LOCAL" = true ]; then
+        # Dev install from local source: venv + editable install
+        check_python
+        check_pip
+        detect_existing_installation
+        create_install_dir
+        download_package
+        install_via_pip
+        create_symlink
+    elif install_via_tool; then
+        # Installed via uv or pipx: they manage env and PATH themselves
+        :
+    else
+        # Fallback: download source and install into a managed venv
+        check_python
+        check_pip
+        detect_existing_installation
+        create_install_dir
+        download_package
+        install_via_pip
+        create_symlink
+    fi
     
     # Update PATH
     update_path

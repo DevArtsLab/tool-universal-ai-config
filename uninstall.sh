@@ -2,8 +2,8 @@
 
 # Universal AI Configuration Uninstaller
 # Usage:
-#   Interactive: curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/uninstall.sh | bash
-#   Non-interactive: curl -fsSL https://raw.githubusercontent.com/DevArtsLab/universal-ai-config/main/uninstall.sh | bash -s -- --yes
+#   Interactive: curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/uninstall.sh | bash
+#   Non-interactive: curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config/main/uninstall.sh | bash -s -- --yes
 
 set -e
 
@@ -109,6 +109,20 @@ remove_symlink() {
     fi
 }
 
+remove_tool_installs() {
+    # Remove uv/pipx managed installs if present
+    if command -v uv &> /dev/null && uv tool list 2>/dev/null | grep -q "universal-ai-config"; then
+        print_info "Removing uv tool install..."
+        uv tool uninstall universal-ai-config
+        print_success "Removed uv tool"
+    fi
+    if command -v pipx &> /dev/null && pipx list --short 2>/dev/null | grep -q "universal-ai-config"; then
+        print_info "Removing pipx install..."
+        pipx uninstall universal-ai-config
+        print_success "Removed pipx install"
+    fi
+}
+
 remove_installation() {
     if [ -d "$INSTALL_DIR" ]; then
         print_info "Removing installation directory..."
@@ -164,6 +178,7 @@ main() {
     confirm_uninstall
     
     remove_symlink
+    remove_tool_installs
     remove_installation
     ask_remove_config
     cleanup_path

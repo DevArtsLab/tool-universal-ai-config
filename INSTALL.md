@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Python 3.8 or higher
+- Python 3.9 or higher
 - pip (Python package manager)
 
 ## Installation Methods
@@ -19,8 +19,8 @@ This will install the `ai-config` command-line tool globally.
 
 ```bash
 # Clone the repository
-git clone https://github.com/DevArtsLab/universal-ai-config.git
-cd universal-ai-config
+git clone https://github.com/DevArtsLab/tool-universal-ai-config.git
+cd tool-universal-ai-config
 
 # Install in development mode
 pip install -e .
@@ -173,8 +173,8 @@ ai-config validate
 For contributors:
 
 ```bash
-git clone https://github.com/DevArtsLab/universal-ai-config.git
-cd universal-ai-config
+git clone https://github.com/DevArtsLab/tool-universal-ai-config.git
+cd tool-universal-ai-config
 pip install -e ".[dev]"
 ```
 
