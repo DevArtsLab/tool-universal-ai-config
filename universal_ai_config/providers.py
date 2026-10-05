@@ -88,8 +88,16 @@ PROVIDERS: Dict[str, ProviderSpec] = {
         display="Windsurf",
         detect_paths=["~/.codeium", "~/.windsurf"],
         read_paths={
-            "user_config": ["~/.windsurf/config.json", "~/.windsurf/argv.json"],
-            "user_mcp": ["~/.windsurf/mcp_config.json"],
+            "user_config": [
+                "~/.windsurf/config.json",
+                "~/.windsurf/argv.json",
+                "~/.codeium/config.json",
+            ],
+            "user_mcp": [
+                "~/.codeium/mcp_config.json",
+                "~/.windsurf/mcp_config.json",
+                "~/.codeium/windsurf/mcp_config.json",
+            ],
             "user_skills": ["~/.windsurf/skills/"],
             "user_rules": ["~/.codeium/windsurf/memories/global_rules.md", "~/.windsurf/AGENTS.md"],
             "project_config": [".windsurf/config.json"],
@@ -101,7 +109,7 @@ PROVIDERS: Dict[str, ProviderSpec] = {
         },
         user=SyncTargets(
             config_file="~/.windsurf/config.json",
-            mcp_file="~/.windsurf/mcp_config.json",
+            mcp_file="~/.codeium/mcp_config.json",
             mcp_key="mcpServers",
             rules_path="~/.codeium/windsurf/memories/global_rules.md",
             rules_mode="file",

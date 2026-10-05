@@ -103,6 +103,7 @@ class ProviderMigrator:
         if mcp_src and mcp_src != config_src:
             mcp_sources.append((mcp_src, True))
 
+        existing_servers = self.config.load_mcp_servers()
         for src, allow_root_level in mcp_sources:
             data = load_any_safe(src)
             servers = extract_mcp_servers(spec, data)
@@ -114,7 +115,22 @@ class ProviderMigrator:
                     if isinstance(v, dict) and ("command" in v or "url" in v)
                 }
             for name, server_config in servers.items():
+                if name in existing_servers:
+                    if existing_servers[name] == server_config:
+                        print(f"  Skipping duplicate MCP server: {name}")
+                        continue
+                    # Same name, different config: keep both under an alias
+                    alias = f"{name}.{provider}"
+                    n = 2
+                    while alias in existing_servers:
+                        alias = f"{name}.{provider}.{n}"
+                        n += 1
+                    print(
+                        f"  MCP server '{name}' differs from existing entry; " f"kept as '{alias}'"
+                    )
+                    name = alias
                 self.config.add_mcp_server(name, server_config)
+                existing_servers[name] = server_config
                 print(f"  Migrated MCP server from {src}: {name}")
 
         # Migrate skills directory

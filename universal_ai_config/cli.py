@@ -303,7 +303,9 @@ class CLI:
             print(f"Error: {e}")
             sys.exit(1)
 
-    def sync(self, providers=None, project=False, all_providers=False, dry_run=False) -> None:
+    def sync(
+        self, providers=None, project=False, all_providers=False, prune=False, dry_run=False
+    ) -> None:
         """Write unified config back to provider-native locations."""
         engine = SyncEngine(self.env)
 
@@ -314,6 +316,7 @@ class CLI:
             providers=providers,
             project=project,
             all_providers=all_providers,
+            prune=prune,
             dry_run=dry_run,
         )
 
@@ -413,6 +416,12 @@ def main():
         help="Sync to all known providers, even if not detected",
     )
     sync_parser.add_argument(
+        "--prune",
+        action="store_true",
+        help="Make provider MCP lists an exact mirror of unified config "
+        "(removes extras, backs up files first)",
+    )
+    sync_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be written without writing"
     )
 
@@ -443,6 +452,7 @@ def main():
             providers=args.provider,
             project=args.project,
             all_providers=args.all_providers,
+            prune=args.prune,
             dry_run=args.dry_run,
         )
 

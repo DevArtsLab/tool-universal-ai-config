@@ -144,6 +144,72 @@ def test_sync_unknown_provider(sandbox):
     assert result.actions[0].status == "error"
 
 
+def test_sync_mcp_scoping_include(sandbox):
+    (sandbox / ".cursor").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"mcp": {"include": ["github"]}}}
+    config.save_unified(unified)
+    config.save_mcp_servers({"github": {"command": "a"}, "other": {"command": "b"}})
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
+    assert set(mcp["mcpServers"]) == {"github"}
+
+
+def test_sync_mcp_scoping_exclude(sandbox):
+    (sandbox / ".cursor").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"mcp": {"exclude": ["other"]}}}
+    config.save_unified(unified)
+    config.save_mcp_servers({"github": {"command": "a"}, "other": {"command": "b"}})
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
+    assert set(mcp["mcpServers"]) == {"github"}
+
+
+def test_sync_prune_removes_extra_servers(sandbox):
+    (sandbox / ".cursor").mkdir()
+    mcp_path = sandbox / ".cursor" / "mcp.json"
+    mcp_path.write_text(json.dumps({"mcpServers": {"stale": {"command": "old"}}}))
+
+    engine = SyncEngine(AgentEnv())
+    engine.sync(providers=["cursor"], prune=True)
+
+    mcp = json.loads(mcp_path.read_text())
+    assert "stale" not in mcp["mcpServers"]
+    assert "github" in mcp["mcpServers"]
+    assert (sandbox / ".cursor" / "mcp.json.backup").exists()
+
+
+def test_sync_without_prune_keeps_extra_servers(sandbox):
+    (sandbox / ".cursor").mkdir()
+    mcp_path = sandbox / ".cursor" / "mcp.json"
+    mcp_path.write_text(json.dumps({"mcpServers": {"stale": {"command": "old"}}}))
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    mcp = json.loads(mcp_path.read_text())
+    assert "stale" in mcp["mcpServers"]
+    assert "github" in mcp["mcpServers"]
+    assert not (sandbox / ".cursor" / "mcp.json.backup").exists()
+
+
+def test_sync_prune_dry_run_reports_removal(sandbox):
+    (sandbox / ".cursor").mkdir()
+    mcp_path = sandbox / ".cursor" / "mcp.json"
+    mcp_path.write_text(json.dumps({"mcpServers": {"stale": {"command": "old"}}}))
+
+    result = SyncEngine(AgentEnv()).sync(providers=["cursor"], prune=True, dry_run=True)
+
+    assert any("stale" in a.detail for a in result.actions)
+    assert json.loads(mcp_path.read_text())["mcpServers"]["stale"]
+
+
 def test_detect_installed_in_sandbox(sandbox):
     from universal_ai_config.providers import detect_installed
 

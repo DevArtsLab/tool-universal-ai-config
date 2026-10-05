@@ -1,0 +1,70 @@
+# Changelog
+
+All notable changes to this project are documented here.
+Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
+versions follow [Semantic Versioning](https://semver.org/).
+
+## [0.2.0] - Unreleased
+
+### Added
+
+- `ai-config sync` command: writes the unified configuration back to each
+  provider's native files (export direction; `migrate` is the import direction)
+  - `--dry-run` previews every planned write
+  - `--provider <name>` (repeatable) targets specific providers
+  - `--all` syncs every known provider, even undetected ones
+  - `--project` syncs project-level targets (`.cursor/`, `.vscode/`,
+    `.github/copilot-instructions.md`, `CLAUDE.md`, `AGENTS.md`, `.rules`)
+  - `--prune` makes provider MCP lists an exact mirror of the unified config,
+    backing up files before removing servers
+- Per-provider MCP scoping via `providers.<name>.mcp`:
+  `{"include": [...]}` or `{"exclude": [...]}`
+- Provider coverage expanded from 3 to 9: added Cursor, Codex CLI, Gemini CLI,
+  VS Code (Copilot), Zed, and Continue alongside Devin, Windsurf, and Claude
+- Multi-format config support: JSON, TOML (`config.toml`), and YAML
+  (`config.yaml`) are read and written where providers use them
+- Per-provider MCP shape translation: `mcpServers` (most), `servers` with
+  `type` (VS Code), `context_servers` (Zed, stdio only), TOML
+  `[mcp_servers.*]` (Codex), YAML list (Continue)
+- Rules sync: unified `AGENTS.md` lands as a managed block
+  (`<!-- BEGIN ai-config managed -->`) in shared files, or as dedicated rule
+  files (`.cursor/rules/*.mdc`, `.continue/rules/*.md`, Windsurf global rules)
+- Windsurf coverage spans the Codeium-era paths (`~/.codeium/`) and current
+  `~/.windsurf/` paths; Devin CLI covers `~/.config/devin/` and `~/.devin/`
+- MCP migration dedupes identical servers and keeps conflicting same-name
+  servers under a `<name>.<provider>` alias instead of silently overwriting
+- `tests/` suite: 35 tests covering formats, provider translation, sync,
+  and migration
+
+### Fixed
+
+- `AgentEnv.project_config` was declared `@property` but accepts a `cwd`
+  argument, so `get_merged_config(cwd=)` (the documented provider integration
+  call) always raised `TypeError`
+- `ProjectConfig.enable_feature` overwrote the `enabled_features` list with
+  each call, and `disable_feature` wrote to a `disabled_features` key that
+  nothing read - both now correctly maintain `enabled_features`
+- All outstanding mypy errors in `project.py`, `config.py`, and `migration.py`
+
+### Changed
+
+- `ProviderMigrator.PROVIDER_PATHS` now derives from the provider registry in
+  `providers.py` (single source for read paths and sync targets)
+- New dependencies: `tomli` (Python <3.11), `tomli-w`, `pyyaml`
+
+## [0.1.1] - 2026-10-04
+
+### Fixed
+
+- macOS Intel binary build moved from retired `macos-13` runner to
+  `macos-15-intel`
+
+## [0.1.0] - 2026-10-04
+
+### Added
+
+- Initial release: `init`, `migrate`, `validate`, `status`, `init-project`,
+  `get-config`, `set-config` commands
+- Unified `~/.agents/` directory layout and `.ai/` project config
+- Migration from Devin, Windsurf, and Claude configs
+- PyPI + standalone binary releases via tag-driven workflow

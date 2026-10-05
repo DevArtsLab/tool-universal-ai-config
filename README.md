@@ -30,6 +30,12 @@ Only providers detected on your machine are synced by default. Use
 `ai-config sync --all` to write to every provider, or `--provider <name>`
 to target one explicitly.
 
+Legacy paths are covered too: the Windsurf line spans Codeium-era
+(`~/.codeium/`) through current `~/.windsurf/` locations, and Devin detection
+covers both `~/.config/devin/` (active config) and `~/.devin/` (application
+data). Migration reads every known path; sync writes to the provider's
+current master location.
+
 ## Installation
 
 ### Package Manager (Recommended)
@@ -62,7 +68,8 @@ virtual environment. It will:
 
 Prebuilt binaries for Linux, macOS (Intel and Apple Silicon), and Windows are
 attached to each [GitHub release](https://github.com/DevArtsLab/tool-universal-ai-config/releases)
-— no Python required.
+
+- no Python required.
 
 ### Manual Install
 
@@ -237,7 +244,7 @@ Get configuration for a specific provider.
 ai-config get-config devin
 ```
 
-### `ai-config sync [--provider NAME] [--project] [--all] [--dry-run]`
+### `ai-config sync [--provider NAME] [--project] [--all] [--prune] [--dry-run]`
 
 Write the unified config back to each provider's native files: MCP servers
 (translated to each provider's format: `mcpServers`, `servers`,
@@ -251,7 +258,31 @@ ai-config sync                # sync detected providers
 ai-config sync --provider cursor   # one provider
 ai-config sync --all          # every known provider
 ai-config sync --project      # project-level targets (.cursor/, .vscode/, ...)
+ai-config sync --prune        # also remove MCP servers no longer in scope
 ```
+
+Sync merges by default: existing keys in provider files are preserved, so
+servers added outside the unified config survive. Pass `--prune` to make a
+provider's MCP list an exact mirror of its scoped unified set; pruned files
+are backed up with a `.backup` suffix first.
+
+#### Per-provider MCP scoping
+
+By default every provider receives the full unified MCP server set. Scope it
+in `~/.agents/config/config.json`:
+
+```json
+{
+  "providers": {
+    "cursor": { "mcp": { "include": ["github", "filesystem"] } },
+    "claude": { "mcp": { "exclude": ["internal-tools"] } }
+  }
+}
+```
+
+`include` is an allowlist (only those servers sync); `exclude` removes
+servers from the full set. Use this to keep credential-bearing MCP configs
+out of providers that don't need them.
 
 Rules synced into shared files (like a project `AGENTS.md`) are wrapped in
 `<!-- BEGIN ai-config managed -->` markers so repeated syncs update in place
@@ -290,6 +321,11 @@ The tool automatically detects and migrates from Devin, Windsurf, Claude,
 Cursor, Codex, Gemini, VS Code, Zed, and Continue - see the provider table
 above for the exact paths scanned. JSON, TOML, and YAML configs are all
 supported.
+
+MCP servers are deduplicated on import: identical entries merge, and a
+same-name server with a different config is kept under a `<name>.<provider>`
+alias (e.g. `github.cursor`) rather than silently overwriting the existing
+one.
 
 Legacy configs are backed up with `.backup` extension.
 

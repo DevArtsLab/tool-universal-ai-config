@@ -66,6 +66,7 @@ class SyncEngine:
         providers: Optional[List[str]] = None,
         project: bool = False,
         all_providers: bool = False,
+        prune: bool = False,
         dry_run: bool = False,
     ) -> SyncResult:
         from .providers import detect_installed
@@ -116,6 +117,7 @@ class SyncEngine:
                 rules_text,
                 skills_dir,
                 result,
+                prune,
                 dry_run,
             )
 
@@ -131,20 +133,22 @@ class SyncEngine:
         rules_text: Optional[str],
         skills_dir: Path,
         result: SyncResult,
+        prune: bool,
         dry_run: bool,
     ) -> None:
         # Config file: merge provider-specific settings into native config.
         # Unified-namespace keys never belong in a native config file.
-        reserved = {"mcpServers", "mcp_servers", "context_servers", "servers", "skills"}
+        reserved = {"mcpServers", "mcp_servers", "context_servers", "servers", "skills", "mcp"}
         native_settings = {k: v for k, v in settings.items() if k not in reserved}
         config_path = self._resolve(scope.config_file, base)
         if config_path and native_settings:
             self._write_merged(config_path, native_settings, spec.name, "config", result, dry_run)
 
-        # MCP servers
+        # MCP servers, filtered through per-provider scoping
+        scoped = self._filter_mcp(settings.get("mcp"), mcp_servers)
         mcp_path = self._resolve(scope.mcp_file, base)
-        if mcp_path and mcp_servers and scope.mcp_key:
-            rendered = render_mcp_servers(scope.mcp_style, mcp_servers)
+        if mcp_path and scoped and scope.mcp_key:
+            rendered = render_mcp_servers(scope.mcp_style, scoped)
             self._write_merged(
                 mcp_path,
                 {scope.mcp_key: rendered},
@@ -152,6 +156,7 @@ class SyncEngine:
                 "mcp",
                 result,
                 dry_run,
+                replace_key=scope.mcp_key if prune else None,
             )
 
         # Rules
@@ -175,6 +180,23 @@ class SyncEngine:
             return base / path_str
         return expand(path_str)
 
+    @staticmethod
+    def _filter_mcp(mcp_conf: Optional[Dict[str, Any]], servers: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply providers.<name>.mcp scoping: {"include": [...], "exclude": [...]}.
+
+        include: sync only the named servers. exclude: sync all except the named.
+        Neither: sync everything.
+        """
+        if not isinstance(mcp_conf, dict):
+            return servers
+        include = mcp_conf.get("include")
+        if isinstance(include, list):
+            return {k: v for k, v in servers.items() if k in include}
+        exclude = mcp_conf.get("exclude") or []
+        if isinstance(exclude, list) and exclude:
+            return {k: v for k, v in servers.items() if k not in exclude}
+        return servers
+
     def _write_merged(
         self,
         path: Path,
@@ -183,14 +205,44 @@ class SyncEngine:
         kind: str,
         result: SyncResult,
         dry_run: bool,
+        replace_key: Optional[str] = None,
     ) -> None:
+        """Merge fragment into a config file. When replace_key is set, that
+        top-level key is replaced wholesale (prune mode) instead of merged."""
+        existing = load_any_safe(path) if path.exists() else {}
+
+        removed: List[str] = []
+        if replace_key:
+            old_keys = set((existing.get(replace_key) or {}).keys())
+            new_keys = set((fragment.get(replace_key) or {}).keys())
+            removed = sorted(old_keys - new_keys)
+            existing[replace_key] = fragment[replace_key]
+            merged = existing
+        else:
+            merged = deep_merge(existing, fragment)
+
+        detail = f"remove: {removed}" if removed else ""
         if dry_run:
-            result.add(provider, kind, path, "planned", f"would merge: {list(fragment.keys())}")
+            action = "would replace" if replace_key else "would merge"
+            result.add(
+                provider,
+                kind,
+                path,
+                "planned",
+                f"{action}: {list(fragment.keys())}" + (f" | {detail}" if detail else ""),
+            )
             return
         try:
-            existing = load_any_safe(path) if path.exists() else {}
-            save_any(path, deep_merge(existing, fragment))
-            result.add(provider, kind, path, "written")
+            if removed:
+                shutil.copy2(path, path.with_name(path.name + ".backup"))
+            save_any(path, merged)
+            result.add(
+                provider,
+                kind,
+                path,
+                "written",
+                f"pruned {len(removed)} server(s)" if removed else "",
+            )
         except FormatError as e:
             result.add(provider, kind, path, "error", str(e))
 
