@@ -26,9 +26,10 @@ A unified configuration system for AI agents across multiple providers (Devin, W
 | Zed               | `~/.config/zed/settings.json` | `context_servers` key      | `.rules`                          | -      |
 | Continue          | `~/.continue/config.yaml`     | `mcpServers` list          | `.continue/rules/`                | -      |
 
-Only providers detected on your machine are synced by default. Use
-`ai-config sync --all` to write to every provider, or `--provider <name>`
-to target one explicitly.
+Sync is **opt-in**: detection alone never pushes anything into a provider.
+A provider only receives writes when you set `"providers.<name>.sync": true`
+in `~/.agents/config/config.json`, or when you pass `--provider <name>` /
+`--all` for an explicit one-off export.
 
 Legacy paths are covered too: the Windsurf line spans Codeium-era
 (`~/.codeium/`) through current `~/.windsurf/` locations, and Devin detection
@@ -254,12 +255,16 @@ settings, and skills.
 
 ```bash
 ai-config sync --dry-run      # preview all writes
-ai-config sync                # sync detected providers
-ai-config sync --provider cursor   # one provider
-ai-config sync --all          # every known provider
+ai-config sync                # sync providers opted in via config
+ai-config sync --provider cursor   # one provider, explicit
+ai-config sync --all          # every known provider, explicit
 ai-config sync --project      # project-level targets (.cursor/, .vscode/, ...)
 ai-config sync --prune        # also remove MCP servers no longer in scope
 ```
+
+Bare `ai-config sync` only writes to providers that opted in via
+`"providers.<name>.sync": true`. Providers can also read the unified config
+directly (see Provider Integration) without any file export.
 
 Sync merges by default: existing keys in provider files are preserved, so
 servers added outside the unified config survive. Pass `--prune` to make a

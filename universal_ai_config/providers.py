@@ -385,6 +385,33 @@ def render_mcp_servers(style: str, servers: Dict[str, Any]) -> Any:
     return dict(servers)
 
 
+def normalize_mcp_server(srv: Dict[str, Any]) -> Dict[str, Any]:
+    """Drop empty containers so equivalent server configs compare equal.
+
+    Native translations may inject empty fields (e.g. zed's env: {}); those
+    should not count as differences against the unified entry.
+    """
+    return {k: v for k, v in srv.items() if v is not None and v != {} and v != [] and v != ""}
+
+
+def normalize_mcp_name(name: str) -> str:
+    """Reduce an MCP server name to a comparable form.
+
+    Providers use different naming schemes for the same server, e.g.
+    VS Code registry names: io.github.X/chrome-devtools-mcp,
+    microsoft/playwright-mcp. Returns basename lowercased with common
+    mcp/server affixes stripped.
+    """
+    base = name.rsplit("/", 1)[-1].lower().replace("_", "-")
+    if base.startswith("mcp-"):
+        base = base[4:]
+    for suffix in ("-mcp-server", "-mcp", "-server"):
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    return base or name.lower()
+
+
 def extract_mcp_servers(spec: ProviderSpec, data: Dict[str, Any]) -> Dict[str, Any]:
     """Pull MCP servers out of a loaded provider config, normalized to the
     unified mcpServers map shape."""
@@ -403,7 +430,7 @@ def extract_mcp_servers(spec: ProviderSpec, data: Dict[str, Any]) -> Dict[str, A
     style = spec.user.mcp_style
     if style == "list" and isinstance(raw, list):
         return {
-            item["name"]: {k: v for k, v in item.items() if k != "name"}
+            item["name"]: normalize_mcp_server({k: v for k, v in item.items() if k != "name"})
             for item in raw
             if isinstance(item, dict) and "name" in item
         }
@@ -412,17 +439,23 @@ def extract_mcp_servers(spec: ProviderSpec, data: Dict[str, Any]) -> Dict[str, A
         for name, srv in raw.items():
             if isinstance(srv, dict) and "command" in srv:
                 cmd = srv["command"]
-                out[name] = {
-                    "command": cmd.get("path"),
-                    "args": cmd.get("args", []),
-                    "env": cmd.get("env", {}),
-                }
+                out[name] = normalize_mcp_server(
+                    {
+                        "command": cmd.get("path"),
+                        "args": cmd.get("args", []),
+                        "env": cmd.get("env", {}),
+                    }
+                )
         return out
     if style == "vscode" and isinstance(raw, dict):
         out = {}
         for name, srv in raw.items():
             if isinstance(srv, dict):
-                out[name] = {k: v for k, v in srv.items() if k != "type"}
+                out[name] = normalize_mcp_server({k: v for k, v in srv.items() if k != "type"})
         return out
 
-    return dict(raw) if isinstance(raw, dict) else {}
+    if isinstance(raw, dict):
+        return {
+            name: normalize_mcp_server(srv) for name, srv in raw.items() if isinstance(srv, dict)
+        }
+    return {}

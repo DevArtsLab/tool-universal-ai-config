@@ -67,13 +67,15 @@ def test_extract_vscode_strips_type():
 def test_extract_zed_untransforms():
     spec = PROVIDERS["zed"]
     data = {"context_servers": {"gh": {"command": {"path": "npx", "args": ["x"], "env": {}}}}}
-    assert extract_mcp_servers(spec, data) == {"gh": {"command": "npx", "args": ["x"], "env": {}}}
+    # empty env is normalized away so round-trips compare equal
+    assert extract_mcp_servers(spec, data) == {"gh": {"command": "npx", "args": ["x"]}}
 
 
 def test_extract_list_style():
     spec = PROVIDERS["continue"]
     data = {"mcpServers": [{"name": "gh", "command": "npx", "args": []}]}
-    assert extract_mcp_servers(spec, data) == {"gh": {"command": "npx", "args": []}}
+    # empty args is normalized away
+    assert extract_mcp_servers(spec, data) == {"gh": {"command": "npx"}}
 
 
 def test_extract_toml_style():

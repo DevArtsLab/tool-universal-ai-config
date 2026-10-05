@@ -10,7 +10,12 @@ from typing import Dict, Any, Optional, List
 from .config import UnifiedConfig, deep_merge, load_json, save_json, ConfigError
 from .environment import AgentEnv
 from .formats import load_any_safe
-from .providers import PROVIDERS, extract_mcp_servers
+from .providers import (
+    PROVIDERS,
+    extract_mcp_servers,
+    normalize_mcp_name,
+    normalize_mcp_server,
+)
 
 
 class MigrationError(Exception):
@@ -58,6 +63,29 @@ class ProviderMigrator:
                 detected.append(provider)
 
         return list(set(detected))
+
+    @staticmethod
+    def _find_equivalent(
+        name: str, server_config: Dict[str, Any], existing: Dict[str, Any]
+    ) -> Optional[str]:
+        """Return the key of an existing entry that represents the same server.
+
+        Exact name match first, then normalized-name match so provider registry
+        names like io.github.X/foo-mcp match a unified 'foo'. Empty-field-only
+        differences (env: {}) are ignored.
+        """
+        if name in existing:
+            return name
+        norm = normalize_mcp_name(name)
+        for ename in existing:
+            if normalize_mcp_name(ename) == norm:
+                return ename
+        return None
+
+    @staticmethod
+    def _is_name_conflict(name: str, match: str) -> bool:
+        """True only when the incoming name literally collides."""
+        return name == match
 
     def _load_json_safe(self, path: Optional[Path]) -> Optional[Dict[str, Any]]:
         """Load JSON file safely, returning None on error."""
@@ -115,20 +143,38 @@ class ProviderMigrator:
                     if isinstance(v, dict) and ("command" in v or "url" in v)
                 }
             for name, server_config in servers.items():
-                if name in existing_servers:
-                    if existing_servers[name] == server_config:
-                        print(f"  Skipping duplicate MCP server: {name}")
-                        continue
-                    # Same name, different config: keep both under an alias
+                server_config = normalize_mcp_server(server_config)
+                match = self._find_equivalent(name, server_config, existing_servers)
+                if match and normalize_mcp_server(existing_servers[match]) == server_config:
+                    print(f"  Skipping duplicate MCP server: {name}")
+                    continue
+                if match and self._is_name_conflict(name, match):
+                    # Exact name collision with different config: find or mint
+                    # an alias. Reuse an existing alias whose config already
+                    # matches so re-migrating does not mint .2, .3, ...
                     alias = f"{name}.{provider}"
                     n = 2
-                    while alias in existing_servers:
+                    while (
+                        alias in existing_servers
+                        and normalize_mcp_server(existing_servers[alias]) != server_config
+                    ):
                         alias = f"{name}.{provider}.{n}"
                         n += 1
+                    if alias in existing_servers:
+                        print(f"  Skipping duplicate MCP server: {name} (as {alias})")
+                        continue
                     print(
-                        f"  MCP server '{name}' differs from existing entry; " f"kept as '{alias}'"
+                        f"  MCP server '{name}' differs from existing "
+                        f"'{match}'; kept as '{alias}'"
                     )
                     name = alias
+                elif match:
+                    # Similar normalized name, distinct config, unique name:
+                    # import as-is and note the near-duplicate
+                    print(
+                        f"  Note: '{name}' looks similar to '{match}' "
+                        f"but has a different config"
+                    )
                 self.config.add_mcp_server(name, server_config)
                 existing_servers[name] = server_config
                 print(f"  Migrated MCP server from {src}: {name}")

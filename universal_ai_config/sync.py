@@ -69,24 +69,7 @@ class SyncEngine:
         prune: bool = False,
         dry_run: bool = False,
     ) -> SyncResult:
-        from .providers import detect_installed
-
         result = SyncResult()
-
-        if providers:
-            unknown = [p for p in providers if p not in PROVIDERS]
-            for name in unknown:
-                result.add(name, "-", Path(""), "error", f"unknown provider")
-            targets = [p for p in providers if p in PROVIDERS]
-        elif all_providers:
-            targets = list(PROVIDERS.keys())
-        else:
-            targets = detect_installed()
-            if not targets:
-                print(
-                    "No providers detected. Use --all to sync to every provider "
-                    "or --provider <name> to force one."
-                )
 
         project_root = find_project_root() if project else None
         if project and not project_root:
@@ -100,6 +83,30 @@ class SyncEngine:
         )
         mcp_servers = unified.get("mcpServers", {})
         provider_settings = unified.get("providers", {})
+
+        if providers:
+            unknown = [p for p in providers if p not in PROVIDERS]
+            for name in unknown:
+                result.add(name, "-", Path(""), "error", f"unknown provider")
+            targets = [p for p in providers if p in PROVIDERS]
+        elif all_providers:
+            targets = list(PROVIDERS.keys())
+        else:
+            # Export is opt-in: only providers with providers.<name>.sync: true
+            # in the unified config receive writes. Detection alone is never
+            # enough to push config (or credentials) into a provider file.
+            targets = [
+                name
+                for name, cfg in provider_settings.items()
+                if isinstance(cfg, dict) and cfg.get("sync") is True and name in PROVIDERS
+            ]
+            if not targets:
+                print(
+                    "No providers opted in to sync. Set "
+                    '"providers.<name>.sync": true in '
+                    "~/.agents/config/config.json, or pass --provider <name> / "
+                    "--all for an explicit one-off export."
+                )
         rules_text = self._read_rules(project_root)
         skills_dir = (project_root / ".ai" / "skills") if project_root else self.env.skills
 
@@ -197,6 +204,16 @@ class SyncEngine:
             return {k: v for k, v in servers.items() if k not in exclude}
         return servers
 
+    @staticmethod
+    def _server_keys(value: Any) -> set:
+        """Server names from a native value: dict keys, or 'name' fields in
+        a list-style collection (e.g. Continue's YAML list)."""
+        if isinstance(value, dict):
+            return set(value.keys())
+        if isinstance(value, list):
+            return {i["name"] for i in value if isinstance(i, dict) and "name" in i}
+        return set()
+
     def _write_merged(
         self,
         path: Path,
@@ -213,8 +230,8 @@ class SyncEngine:
 
         removed: List[str] = []
         if replace_key:
-            old_keys = set((existing.get(replace_key) or {}).keys())
-            new_keys = set((fragment.get(replace_key) or {}).keys())
+            old_keys = self._server_keys(existing.get(replace_key))
+            new_keys = self._server_keys(fragment.get(replace_key))
             removed = sorted(old_keys - new_keys)
             existing[replace_key] = fragment[replace_key]
             merged = existing

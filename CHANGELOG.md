@@ -48,6 +48,16 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **BREAKING**: `ai-config sync` no longer writes to every detected provider
+  by default. Export is opt-in via `"providers.<name>.sync": true`, or
+  explicit `--provider` / `--all` flags. Global config is now the
+  store-of-truth; providers read it directly or receive explicit exports.
+  This prevents credentials in MCP `env` from propagating to every installed
+  tool
+- Migration dedupes across provider naming schemes (e.g. VS Code registry
+  names like `io.github.X/foo-mcp` match `foo`), normalizes empty injected
+  fields on compare, and reuses existing aliases instead of minting `.2`/`.3`
+  suffixes on re-import
 - `ProviderMigrator.PROVIDER_PATHS` now derives from the provider registry in
   `providers.py` (single source for read paths and sync targets)
 - New dependencies: `tomli` (Python <3.11), `tomli-w`, `pyyaml`

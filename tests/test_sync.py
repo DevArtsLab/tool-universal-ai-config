@@ -216,3 +216,26 @@ def test_detect_installed_in_sandbox(sandbox):
     (sandbox / ".cursor").mkdir()
     assert "cursor" in detect_installed()
     assert "zed" not in detect_installed()
+
+
+def test_bare_sync_writes_nothing_without_optin(sandbox):
+    """Detected-but-not-opted-in providers get no writes by default."""
+    (sandbox / ".cursor").mkdir()
+    result = SyncEngine(AgentEnv()).sync()
+
+    assert not result.actions
+    assert not (sandbox / ".cursor" / "mcp.json").exists()
+
+
+def test_bare_sync_writes_opted_in_providers(sandbox):
+    (sandbox / ".cursor").mkdir()
+    (sandbox / ".codex").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"sync": True}}
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync()
+
+    assert (sandbox / ".cursor" / "mcp.json").exists()
+    assert not (sandbox / ".codex" / "config.toml").exists()

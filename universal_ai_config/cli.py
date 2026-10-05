@@ -182,6 +182,13 @@ class CLI:
             providers = config.get("providers", {})
             if providers:
                 print(f"\nConfigured providers: {', '.join(providers.keys())}")
+                sync_enabled = [
+                    n for n, c in providers.items() if isinstance(c, dict) and c.get("sync") is True
+                ]
+                print(
+                    f"Sync-enabled (export): "
+                    f"{', '.join(sync_enabled) if sync_enabled else 'none'}"
+                )
             else:
                 print(f"\nNo providers configured yet")
 
@@ -399,7 +406,8 @@ def main():
 
     # sync command
     sync_parser = subparsers.add_parser(
-        "sync", help="Write unified config to provider-native locations"
+        "sync",
+        help="Export unified config to providers opted in via providers.<name>.sync (or use --provider/--all)",
     )
     sync_parser.add_argument(
         "--provider", action="append", help="Sync only this provider (repeatable)"
