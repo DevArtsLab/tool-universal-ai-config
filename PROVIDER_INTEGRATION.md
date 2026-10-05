@@ -149,15 +149,34 @@ When reading configuration, use this precedence (highest to lowest):
 If your provider has existing configuration, support migration:
 
 ```python
-from universal_ai_config.migration import ProviderMigrator
+# Add a ProviderSpec to the registry in universal_ai_config/providers.py
+from universal_ai_config.providers import PROVIDERS, ProviderSpec, SyncTargets
 
-# Add your provider to the legacy paths
-ProviderMigrator.LEGACY_PATHS["your-provider"] = {
-    "user": "~/.your-provider/config.json",
-    "project": ".your-provider/config.json"
-}
+PROVIDERS["your-provider"] = ProviderSpec(
+    name="your-provider",
+    display="Your Provider",
+    detect_paths=["~/.your-provider"],
+    read_paths={
+        "user_config": ["~/.your-provider/config.json"],
+        "user_mcp": ["~/.your-provider/mcp_config.json"],
+        "user_skills": ["~/.your-provider/skills/"],
+        "user_rules": ["~/.your-provider/AGENTS.md"],
+        "project_config": [".your-provider/config.json"],
+        "project_mcp": [".your-provider/mcp_config.json"],
+        "project_skills": [".your-provider/skills/"],
+        "project_rules": ["AGENTS.md"],
+    },
+    user=SyncTargets(
+        config_file="~/.your-provider/config.json",
+        mcp_file="~/.your-provider/mcp_config.json",
+        mcp_key="mcpServers",
+        rules_path="~/.your-provider/AGENTS.md",
+        rules_mode="file",
+        skills_dir="~/.your-provider/skills",
+    ),
+)
 
-# Users can then run: ai-config migrate
+# Users can then run: ai-config migrate (import) and ai-config sync (export)
 ```
 
 ## Best Practices

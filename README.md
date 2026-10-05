@@ -7,9 +7,28 @@ A unified configuration system for AI agents across multiple providers (Devin, W
 - **Unified Configuration**: Single config file for all AI providers
 - **XDG-Compliant**: Follows Linux/macOS/Windows directory standards
 - **Migration Support**: Automatically migrates existing provider configs
+- **Sync**: Writes unified config back to each provider's native files (`ai-config sync`)
 - **Project-Local**: Per-project configuration with `.ai/` directory
 - **Shared Resources**: MCP servers and skills shared across providers
 - **Provider Overrides**: Provider-specific settings when needed
+
+## Supported Providers
+
+| Provider          | Config                        | MCP servers                | Rules                             | Skills |
+| ----------------- | ----------------------------- | -------------------------- | --------------------------------- | ------ |
+| Devin             | `~/.config/devin/config.json` | `mcp_config.json`          | `AGENTS.md`                       | yes    |
+| Windsurf          | `~/.windsurf/config.json`     | `mcp_config.json`          | global rules / `.windsurf/rules/` | yes    |
+| Claude            | `~/.claude/settings.json`     | `.mcp.json`                | `CLAUDE.md`                       | yes    |
+| Cursor            | `~/.cursor/settings.json`     | `~/.cursor/mcp.json`       | `.cursor/rules/*.mdc`             | yes    |
+| Codex CLI         | `~/.codex/config.toml`        | same file (TOML)           | `AGENTS.md`                       | -      |
+| Gemini CLI        | `~/.gemini/settings.json`     | `mcpServers` key           | `GEMINI.md`                       | -      |
+| VS Code / Copilot | `settings.json`               | `mcp.json` (`servers` key) | `.github/copilot-instructions.md` | -      |
+| Zed               | `~/.config/zed/settings.json` | `context_servers` key      | `.rules`                          | -      |
+| Continue          | `~/.continue/config.yaml`     | `mcpServers` list          | `.continue/rules/`                | -      |
+
+Only providers detected on your machine are synced by default. Use
+`ai-config sync --all` to write to every provider, or `--provider <name>`
+to target one explicitly.
 
 ## Installation
 
@@ -218,6 +237,26 @@ Get configuration for a specific provider.
 ai-config get-config devin
 ```
 
+### `ai-config sync [--provider NAME] [--project] [--all] [--dry-run]`
+
+Write the unified config back to each provider's native files: MCP servers
+(translated to each provider's format: `mcpServers`, `servers`,
+`context_servers`, TOML `mcp_servers`, or YAML lists), rules (as a managed
+block in `CLAUDE.md`/`AGENTS.md`/etc., or dedicated rule files), provider
+settings, and skills.
+
+```bash
+ai-config sync --dry-run      # preview all writes
+ai-config sync                # sync detected providers
+ai-config sync --provider cursor   # one provider
+ai-config sync --all          # every known provider
+ai-config sync --project      # project-level targets (.cursor/, .vscode/, ...)
+```
+
+Rules synced into shared files (like a project `AGENTS.md`) are wrapped in
+`<!-- BEGIN ai-config managed -->` markers so repeated syncs update in place
+without touching the rest of the file.
+
 ### `ai-config set-config <provider> <key> <value>`
 
 Set configuration value for a provider.
@@ -247,11 +286,10 @@ merged_config = config.get_merged_config(cwd=Path.cwd())
 
 ## Migration Details
 
-The tool automatically detects and migrates from:
-
-- **Devin CLI**: `~/.config/devin/config.json`, `.devin/config.json`
-- **Windsurf**: `~/.windsurf/config.json`, `.windsurf/config.json`
-- **Claude**: `~/.config/claude/config.json`, `.claude/config.json`
+The tool automatically detects and migrates from Devin, Windsurf, Claude,
+Cursor, Codex, Gemini, VS Code, Zed, and Continue - see the provider table
+above for the exact paths scanned. JSON, TOML, and YAML configs are all
+supported.
 
 Legacy configs are backed up with `.backup` extension.
 

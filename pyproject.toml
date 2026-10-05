@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "universal-ai-config"
-version = "0.1.1"
+version = "0.2.0"
 description = "Unified configuration management for AI agents across multiple providers"
 readme = "README.md"
 license = "MIT"
@@ -26,7 +26,11 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 requires-python = ">=3.9"
-dependencies = []
+dependencies = [
+    "tomli>=2.0; python_version<'3.11'",
+    "tomli-w>=1.0",
+    "pyyaml>=6.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -34,6 +38,7 @@ dev = [
     "pytest-cov>=4.0",
     "black>=23.0",
     "mypy>=1.0",
+    "types-PyYAML>=6.0",
 ]
 
 [project.scripts]
