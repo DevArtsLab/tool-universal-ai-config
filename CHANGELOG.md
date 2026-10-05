@@ -4,7 +4,7 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.2.1] - 2026-10-05
 
 ### Security
 
@@ -15,6 +15,14 @@ versions follow [Semantic Versioning](https://semver.org/).
   `SecurityWarning` is emitted when a directory is skipped or when ownership
   cannot be verified (Windows). Directories that fail verification are
   skipped, not loaded.
+
+### Changed
+
+- GitHub Actions bumped to Node 24 majors (`checkout` v7, `setup-python` v7,
+  `upload-artifact` v7, `download-artifact` v8, `action-gh-release` v3) -
+  clears the Node 20 deprecation annotations on every run.
+- Release workflow now derives the GitHub release body from `CHANGELOG.md`
+  instead of relying solely on auto-generated notes.
 
 ## [0.2.0] - 2026-10-05
 

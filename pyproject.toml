@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "universal-ai-config"
-version = "0.2.0"
+version = "0.2.1"
 description = "Unified configuration management for AI agents across multiple providers"
 readme = "README.md"
 license = "MIT"
