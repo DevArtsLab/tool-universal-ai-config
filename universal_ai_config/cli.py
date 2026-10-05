@@ -136,7 +136,7 @@ class CLI:
                 issues.append(f"Invalid unified config: {e}")
 
         # Check skills directory
-        skills_dir = self.env.config / "skills"
+        skills_dir = self.env.skills
         if skills_dir.exists():
             skill_count = len(list(skills_dir.glob("*/SKILL.md")))
             print(f"  ✓ Skills directory: {skill_count} skills found")
@@ -268,7 +268,7 @@ class CLI:
         if gitignore.exists():
             gitignore_content = gitignore.read_text()
 
-        local_configs = [".ai/config.local.json", ".ai/mcp_config.local.json"]
+        local_configs = [".ai/config.local.json", ".ai/mcp-config.local.json"]
 
         additions = []
         for local_config in local_configs:

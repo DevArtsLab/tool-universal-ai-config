@@ -55,7 +55,7 @@ deny_rules = permissions.get("deny", [])
 ask_rules = permissions.get("ask", [])
 
 # Example: Apply MCP servers
-mcp_servers = provider_config.get("mcpServers", {})
+mcp_servers = provider_config.get("context_servers", {})
 for server_name, server_config in mcp_servers.items():
     # Initialize MCP server with config
     initialize_mcp_server(server_name, server_config)
@@ -120,8 +120,9 @@ The unified config file (`~/.agents/config/config.json`) has this structure:
       }
     }
   },
-  "mcpServers": {
-    // Shared MCP servers (stored in ~/.agents/config/mcp-config.json)
+  "context_servers": {
+    // Shared MCP servers (stored in ~/.agents/config/mcp-config.json,
+    // merged into the loaded config under this key)
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"]
@@ -170,9 +171,16 @@ PROVIDERS["your-provider"] = ProviderSpec(
         config_file="~/.your-provider/config.json",
         mcp_file="~/.your-provider/mcp_config.json",
         mcp_key="mcpServers",
+        mcp_style="map",  # map | vscode | zed | list
         rules_path="~/.your-provider/AGENTS.md",
-        rules_mode="file",
+        rules_mode="file",  # file | mdc_dir | md_dir | none
         skills_dir="~/.your-provider/skills",
+    ),
+    project=SyncTargets(  # optional: where `sync --project` writes
+        mcp_file=".your-provider/mcp_config.json",
+        mcp_key="mcpServers",
+        rules_path="AGENTS.md",
+        rules_mode="file",
     ),
 )
 
@@ -243,7 +251,7 @@ class MyAIProvider:
                 "deny": [],
                 "ask": []
             },
-            "mcpServers": {},
+            "context_servers": {},
             "skills": {
                 "enabled": [],
                 "paths": []
@@ -263,7 +271,7 @@ class MyAIProvider:
     @property
     def mcp_servers(self) -> dict:
         """Get MCP server configuration."""
-        return self._config.get("mcpServers", {})
+        return self._config.get("context_servers", {})
 
     def initialize(self):
         """Initialize the provider with loaded configuration."""

@@ -117,12 +117,14 @@ Same as Linux (XDG-compliant):
 
 ### Windows
 
-Uses Windows AppData paths:
+Uses the same `~/.agents/` layout (`%USERPROFILE%\.agents\`):
 
-- Config: `%APPDATA%\ai\`
-- Data: `%LOCALAPPDATA%\ai\`
-- State: `%LOCALAPPDATA%\ai\state\`
-- Cache: `%TEMP%\ai\` or `%LOCALAPPDATA%\ai\cache\`
+- Config: `%USERPROFILE%\.agents\config\`
+- Data: `%USERPROFILE%\.agents\data\`
+- State: `%USERPROFILE%\.agents\state\`
+- Cache: `%USERPROFILE%\.agents\cache\`
+
+On all platforms, `AGENT_CONFIG_HOME` overrides the base directory.
 
 ## Troubleshooting
 

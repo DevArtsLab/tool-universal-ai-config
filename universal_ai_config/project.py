@@ -150,7 +150,7 @@ class ProjectConfig:
                 pass
 
         # Merge local overrides
-        local_path = ai_dir / "mcp_config.local.json"
+        local_path = ai_dir / "mcp-config.local.json"
         if local_path.exists():
             try:
                 local_config = load_json(local_path)

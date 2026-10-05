@@ -179,11 +179,11 @@ ai-config migrate --project
 
 ### MCP Config (`~/.agents/config/mcp-config.json`)
 
-MCP servers are kept in a separate file:
+MCP servers are kept in a separate file under the `context_servers` key:
 
 ```json
 {
-  "mcpServers": {
+  "context_servers": {
     "github": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-github"]
@@ -191,6 +191,10 @@ MCP servers are kept in a separate file:
   }
 }
 ```
+
+The legacy `mcpServers` key is still accepted on read. Set `"disabled": true`
+on a server entry to keep it in the unified store without exporting it - sync
+skips disabled servers even when they are named in an `include` list.
 
 ## Commands
 
@@ -287,7 +291,8 @@ in `~/.agents/config/config.json`:
 
 `include` is an allowlist (only those servers sync); `exclude` removes
 servers from the full set. Use this to keep credential-bearing MCP configs
-out of providers that don't need them.
+out of providers that don't need them. Servers marked `"disabled": true` in
+`mcp-config.json` are never exported, even when named in `include`.
 
 Rules synced into shared files (like a project `AGENTS.md`) are wrapped in
 `<!-- BEGIN ai-config managed -->` markers so repeated syncs update in place
@@ -336,9 +341,9 @@ Legacy configs are backed up with `.backup` extension.
 
 ## Platform Support
 
-- **Linux**: XDG Base Directory Specification
-- **macOS**: XDG paths with `~/.config` fallback
-- **Windows**: `%APPDATA%` and `%LOCALAPPDATA%` paths
+All agent data lives under `~/.agents/` on every platform (Linux, macOS,
+Windows). Set the `AGENT_CONFIG_HOME` environment variable to relocate the
+base directory.
 
 ## Best Practices
 

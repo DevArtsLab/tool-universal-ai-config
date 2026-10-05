@@ -23,7 +23,8 @@ curl -fsSL https://raw.githubusercontent.com/DevArtsLab/tool-universal-ai-config
 
 The installer will:
 
-- Detect existing Devin, Windsurf, Claude configs
+- Detect existing Devin, Windsurf, Claude, Cursor, Codex, Gemini, VS Code,
+  Zed, and Continue configs
 - Ask if you want to migrate them
 - Migrate to the unified structure
 - Backup original configs
@@ -52,6 +53,10 @@ ai-config get-config devin
 
 # Set provider config
 ai-config set-config devin model your-model-name
+
+# Export unified config back to provider-native files
+ai-config sync --dry-run            # preview every write
+ai-config sync --provider cursor    # one provider, explicit
 ```
 
 ## For Developers
@@ -80,25 +85,31 @@ See `PROVIDER_INTEGRATION.md` for detailed integration guide.
 After installation:
 
 ```
-~/.agents/config/              # User configuration
+~/.agents/config/         # User configuration
   ├── config.json         # Unified config
-  ├── skills/             # Shared skills
+  ├── mcp-config.json     # Shared MCP servers (context_servers key)
   └── AGENTS.md           # Shared rules
 
-~/.agents/data/         # Persistent data
-  ├── memory/             # Vector DBs
+~/.agents/skills/         # Shared skills (one dir per skill, each with SKILL.md)
+
+~/.agents/data/           # Persistent data
+  ├── memory/             # Long-term memory, datasets
   └── plugins/            # Plugins
 
-~/.agents/state/         # Runtime state
+~/.agents/state/          # Runtime state
   ├── logs/               # Logs
   └── history/            # Chat history
 
-~/.agents/cache/               # Cache
-  └── models/             # Model caches
+~/.agents/cache/          # Cache
+  ├── models/             # Model caches
+  └── venv/               # Isolated environments
 
 .ai/                        # Project config (in repos)
   ├── config.json         # Team settings
-  ├── config.local.json   # Personal overrides
+  ├── config.local.json   # Personal overrides (gitignored)
+  ├── mcp-config.json     # Project MCP servers
+  ├── mcp-config.local.json # Personal MCP overrides (gitignored)
+  ├── AGENTS.md           # Project rules
   └── skills/             # Project skills
 ```
 
