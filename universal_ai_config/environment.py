@@ -5,8 +5,48 @@ All agent-related data is consolidated under ~/.agents/
 
 import os
 import platform
+import warnings
 from pathlib import Path
 from typing import List, Optional
+
+
+class SecurityWarning(UserWarning):
+    """Configuration was found in a location not owned by the current user."""
+
+
+def _dir_owned_by_user(path: Path) -> Optional[bool]:
+    """True/False from st_uid vs getuid; None when ownership is unverifiable."""
+    getuid = getattr(os, "getuid", None)
+    if getuid is None:
+        return None
+    try:
+        return bool(path.stat().st_uid == getuid())
+    except OSError:
+        return False
+
+
+def _trusted_ai_dir(ai_dir: Path) -> bool:
+    """An .ai/ dir is trusted only when both it and its parent are owned by
+    the current user, so another user can neither write into it nor replace
+    it. Prevents config injection from shared directories (CWE-427)."""
+    owned_ai = _dir_owned_by_user(ai_dir)
+    owned_parent = _dir_owned_by_user(ai_dir.parent)
+    if owned_ai is None or owned_parent is None:
+        warnings.warn(
+            f"Cannot verify ownership of {ai_dir} on this platform; "
+            "loading it anyway. Ensure it is in a directory you trust.",
+            SecurityWarning,
+            stacklevel=3,
+        )
+        return True
+    if owned_ai and owned_parent:
+        return True
+    warnings.warn(
+        f"Skipping untrusted project config {ai_dir}: " "it is not owned by the current user.",
+        SecurityWarning,
+        stacklevel=3,
+    )
+    return False
 
 
 class AgentEnv:
@@ -55,14 +95,19 @@ class AgentEnv:
         return self.base / "cache"
 
     def project_config(self, cwd: Optional[Path] = None) -> Optional[Path]:
-        """Project-local .ai/ directory from current working directory."""
+        """Project-local .ai/ directory from current working directory.
+
+        Only .ai/ directories owned by the current user are trusted; configs
+        in directories owned by other users are skipped to prevent injection
+        from shared workspaces.
+        """
         start = Path(cwd) if cwd else Path.cwd()
 
         # Walk up from cwd looking for .ai/ directory
         current = start
         while current != current.parent:
             ai_dir = current / ".ai"
-            if ai_dir.exists():
+            if ai_dir.exists() and _trusted_ai_dir(ai_dir):
                 return ai_dir
             current = current.parent
 
@@ -107,14 +152,37 @@ class AgentEnv:
 
 
 def find_project_root(cwd: Optional[Path] = None) -> Optional[Path]:
-    """Find project root by looking for .git, .jj, or .ai/ directory."""
+    """Find project root by looking for .git, .jj, or .ai/ directory.
+
+    Only directories owned by the current user are trusted, so project
+    config cannot be injected from a shared location (CWE-427).
+    """
     start = Path(cwd) if cwd else Path.cwd()
     current = start
 
     while current != current.parent:
-        # Check for version control or .ai/ directory
-        if (current / ".git").exists() or (current / ".jj").exists() or (current / ".ai").exists():
-            return current
+        ai_dir = current / ".ai"
+        if ai_dir.exists():
+            if _trusted_ai_dir(ai_dir):
+                return current
+        elif (current / ".git").exists() or (current / ".jj").exists():
+            owned = _dir_owned_by_user(current)
+            if owned is True:
+                return current
+            if owned is None:
+                warnings.warn(
+                    f"Cannot verify ownership of {current} on this platform; "
+                    "using it anyway. Ensure it is a directory you trust.",
+                    SecurityWarning,
+                    stacklevel=2,
+                )
+                return current
+            warnings.warn(
+                f"Skipping untrusted project root {current}: "
+                "it is not owned by the current user.",
+                SecurityWarning,
+                stacklevel=2,
+            )
         current = current.parent
 
     return None

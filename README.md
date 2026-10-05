@@ -345,6 +345,19 @@ All agent data lives under `~/.agents/` on every platform (Linux, macOS,
 Windows). Set the `AGENT_CONFIG_HOME` environment variable to relocate the
 base directory.
 
+## Security: Project Configuration
+
+When resolving project configuration, `ai-config` searches parent
+directories for `.ai/` folders. **Only `.ai/` directories owned by the
+current user are loaded** - this prevents configuration injection from
+shared or world-writable workspaces, where another user could plant a
+malicious `config.json` or `mcp-config.json` (API keys, MCP servers) that
+would merge into your settings and be exported to provider files.
+
+If a `.ai/` directory is skipped, a `SecurityWarning` naming the path is
+emitted. On platforms where ownership cannot be verified (Windows), the
+config is loaded with a warning instead.
+
 ## Best Practices
 
 1. **Secrets Management**: Never store API keys in config files. Use system keyrings or environment variables.

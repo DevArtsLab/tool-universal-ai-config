@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Security
+
+- Project config trust checks (CWE-427): `project_config()` and
+  `find_project_root()` now skip `.ai/` directories that are not owned by the
+  current user, preventing configuration injection (provider credentials,
+  MCP servers) from shared or world-writable directories. A
+  `SecurityWarning` is emitted when a directory is skipped or when ownership
+  cannot be verified (Windows). Directories that fail verification are
+  skipped, not loaded.
+
 ## [0.2.0] - 2026-10-05
 
 ### Added
