@@ -341,18 +341,24 @@ class ProviderMigrator:
                         spec = PROVIDERS[provider]
                         servers = extract_mcp_servers(spec, legacy_config)
                         if servers:
-                            legacy_config = {"mcpServers": servers}
-                    if legacy_config and "mcpServers" in legacy_config:
+                            legacy_config = {"context_servers": servers}
+                    incoming = None
+                    if legacy_config:
+                        incoming = legacy_config.get(
+                            "context_servers", legacy_config.get("mcpServers")
+                        )
+                    if incoming:
                         project_mcp_unified = ai_dir / "mcp-config.json"
 
                         if project_mcp_unified.exists():
-                            existing = load_json(project_mcp_unified)
-                            merged_mcp = existing
-                            merged_mcp["mcpServers"] = deep_merge(
-                                existing.get("mcpServers", {}), legacy_config["mcpServers"]
+                            merged_mcp = load_json(project_mcp_unified)
+                            existing_servers = deep_merge(
+                                merged_mcp.pop("mcpServers", {}),
+                                merged_mcp.get("context_servers", {}),
                             )
+                            merged_mcp["context_servers"] = deep_merge(existing_servers, incoming)
                         else:
-                            merged_mcp = legacy_config
+                            merged_mcp = {"context_servers": incoming}
 
                         save_json(project_mcp_unified, merged_mcp)
                         print(f"Migrated {provider} project MCP config to {project_mcp_unified}")

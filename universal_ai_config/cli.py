@@ -117,7 +117,7 @@ class CLI:
                 print(f"  ✓ Unified config valid: {self.config.unified_config_path}")
 
                 # Validate structure
-                required_keys = ["shared", "providers", "mcpServers", "skills"]
+                required_keys = ["shared", "providers", "context_servers", "skills"]
                 for key in required_keys:
                     if key not in config:
                         issues.append(f"Missing key in config: {key}")
@@ -129,7 +129,7 @@ class CLI:
                     print(f"  ✓ Provider config: {provider}")
 
                 # Validate MCP servers
-                for server in config.get("mcpServers", {}).keys():
+                for server in config.get("context_servers", {}).keys():
                     print(f"  ✓ MCP server: {server}")
 
             except ConfigError as e:
@@ -193,7 +193,7 @@ class CLI:
                 print(f"\nNo providers configured yet")
 
             # MCP servers
-            mcp_servers = config.get("mcpServers", {})
+            mcp_servers = config.get("context_servers", {})
             if mcp_servers:
                 print(f"MCP servers: {', '.join(mcp_servers.keys())}")
             else:

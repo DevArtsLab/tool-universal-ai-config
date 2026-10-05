@@ -81,7 +81,7 @@ class SyncEngine:
             if project_root
             else self.config.load_unified()
         )
-        mcp_servers = unified.get("mcpServers", {})
+        mcp_servers = unified.get("context_servers", {})
         provider_settings = unified.get("providers", {})
 
         if providers:
@@ -145,7 +145,15 @@ class SyncEngine:
     ) -> None:
         # Config file: merge provider-specific settings into native config.
         # Unified-namespace keys never belong in a native config file.
-        reserved = {"mcpServers", "mcp_servers", "context_servers", "servers", "skills", "mcp"}
+        reserved = {
+            "mcpServers",
+            "mcp_servers",
+            "context_servers",
+            "servers",
+            "skills",
+            "mcp",
+            "sync",
+        }
         native_settings = {k: v for k, v in settings.items() if k not in reserved}
         config_path = self._resolve(scope.config_file, base)
         if config_path and native_settings:

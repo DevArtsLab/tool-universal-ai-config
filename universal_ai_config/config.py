@@ -66,7 +66,7 @@ class UnifiedConfig:
         """Load the unified configuration.
 
         If include_mcp is True, MCP servers from mcp-config.json are merged
-        into the returned config under the 'mcpServers' key.
+        into the returned config under the 'context_servers' key.
         """
         if self._unified_config is None:
             path = self.unified_config_path
@@ -80,7 +80,7 @@ class UnifiedConfig:
 
         if include_mcp:
             config = config.copy()
-            config["mcpServers"] = self.load_mcp_servers()
+            config["context_servers"] = self.load_mcp_servers()
 
         return config
 
@@ -90,7 +90,9 @@ class UnifiedConfig:
             return {}
         try:
             mcp_config = load_json(self.mcp_config_path)
-            servers: Dict[str, Any] = mcp_config.get("mcpServers", {})
+            servers: Dict[str, Any] = mcp_config.get(
+                "context_servers", mcp_config.get("mcpServers", {})
+            )
             return servers
         except ConfigError:
             return {}
@@ -103,7 +105,7 @@ class UnifiedConfig:
         config = config.copy()
 
         # Extract MCP servers and save separately
-        mcp_servers = config.pop("mcpServers", None)
+        mcp_servers = config.pop("context_servers", None)
         if mcp_servers is not None:
             self.save_mcp_servers(mcp_servers)
 
@@ -112,7 +114,7 @@ class UnifiedConfig:
 
     def save_mcp_servers(self, mcp_servers: Dict[str, Any]) -> None:
         """Save MCP servers to mcp-config.json."""
-        mcp_config = {"mcpServers": mcp_servers}
+        mcp_config = {"context_servers": mcp_servers}
         save_json(self.mcp_config_path, mcp_config)
 
     def add_mcp_server(self, name: str, config: Dict[str, Any]) -> None:
@@ -140,7 +142,7 @@ class UnifiedConfig:
         config = deep_merge(config, provider_settings)
 
         # Add shared resources
-        config["mcpServers"] = unified.get("mcpServers", {})
+        config["context_servers"] = unified.get("context_servers", {})
         config["skills"] = unified.get("skills", {})
 
         return config
@@ -163,21 +165,19 @@ class UnifiedConfig:
                 mcp_path = path.parent / "mcp-config.json"
                 if mcp_path.exists():
                     project_mcp = load_json(mcp_path)
-                    if "mcpServers" in project_mcp:
-                        merged.setdefault("mcpServers", {})
-                        merged["mcpServers"] = deep_merge(
-                            merged["mcpServers"], project_mcp["mcpServers"]
-                        )
+                    servers = project_mcp.get("context_servers", project_mcp.get("mcpServers"))
+                    if servers:
+                        merged.setdefault("context_servers", {})
+                        merged["context_servers"] = deep_merge(merged["context_servers"], servers)
 
                 # Merge project local MCP config if it exists
                 local_mcp_path = path.parent / "mcp-config.local.json"
                 if local_mcp_path.exists():
                     local_mcp = load_json(local_mcp_path)
-                    if "mcpServers" in local_mcp:
-                        merged.setdefault("mcpServers", {})
-                        merged["mcpServers"] = deep_merge(
-                            merged["mcpServers"], local_mcp["mcpServers"]
-                        )
+                    servers = local_mcp.get("context_servers", local_mcp.get("mcpServers"))
+                    if servers:
+                        merged.setdefault("context_servers", {})
+                        merged["context_servers"] = deep_merge(merged["context_servers"], servers)
             except ConfigError:
                 continue
 
