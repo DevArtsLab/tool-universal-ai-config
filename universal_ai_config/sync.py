@@ -5,6 +5,7 @@ provider's native locations (MCP files, rules files, skills dirs, config files).
 Migration imports provider -> unified. Sync exports unified -> provider.
 """
 
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,13 +46,11 @@ def _upsert_managed_block(path: Path, content: str) -> None:
         path.write_text(block)
         return
 
-    existing = path.read_text()
-    if BLOCK_BEGIN in existing and BLOCK_END in existing:
-        before = existing.split(BLOCK_BEGIN)[0]
-        after = existing.split(BLOCK_END, 1)[1]
-        path.write_text(f"{before}{block}{after.lstrip()}")
-    else:
-        path.write_text(f"{existing.rstrip()}\n\n{block}")
+    # Remove every existing managed block, not just the first: leftover
+    # blocks from older runs would otherwise accumulate on each sync.
+    pattern = re.compile(re.escape(BLOCK_BEGIN) + r".*?" + re.escape(BLOCK_END) + r"\n?", re.S)
+    existing = pattern.sub("", path.read_text()).rstrip()
+    path.write_text(f"{existing}\n\n{block}" if existing else block)
 
 
 class SyncEngine:

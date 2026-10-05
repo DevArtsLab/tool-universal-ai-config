@@ -4,6 +4,7 @@ Discovers and migrates configs, MCP servers, skills, and rules from provider-spe
 """
 
 import json
+import re
 import shutil
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -16,6 +17,7 @@ from .providers import (
     normalize_mcp_name,
     normalize_mcp_server,
 )
+from .sync import BLOCK_BEGIN, BLOCK_END
 
 
 class MigrationError(Exception):
@@ -275,17 +277,34 @@ class ProviderMigrator:
         unified_rules = self.env.config / "AGENTS.md"
         unified_rules.parent.mkdir(parents=True, exist_ok=True)
 
+        additional = self._strip_synced_rules(self._read_rules_source(legacy_rules))
         if not unified_rules.exists():
-            unified_rules.write_text(self._read_rules_source(legacy_rules))
-            print(f"  Migrated rules to: {unified_rules}")
-        else:
-            # Append to existing rules
-            existing = unified_rules.read_text()
-            additional = self._read_rules_source(legacy_rules)
-            unified_rules.write_text(
-                f"{existing}\n\n<!-- Migrated from {provider} -->\n{additional}"
-            )
-            print(f"  Appended rules from: {legacy_rules}")
+            if additional:
+                unified_rules.write_text(additional)
+                print(f"  Migrated rules to: {unified_rules}")
+            return
+
+        existing = unified_rules.read_text()
+        if not additional or additional in existing:
+            print(f"  Rules already up to date: {legacy_rules}")
+            return
+        unified_rules.write_text(
+            f"{existing.rstrip()}\n\n<!-- Migrated from {provider} -->\n{additional}\n"
+        )
+        print(f"  Appended rules from: {legacy_rules}")
+
+    @staticmethod
+    def _strip_synced_rules(text: str) -> str:
+        """Remove ai-config managed blocks and migration markers so previously
+        exported/migrated content is never re-imported into the unified store."""
+        text = re.sub(
+            re.escape(BLOCK_BEGIN) + r".*?" + re.escape(BLOCK_END) + r"\n?",
+            "",
+            text,
+            flags=re.S,
+        )
+        text = re.sub(r"<!-- Migrated from \w+ -->\n?", "", text)
+        return text.strip()
 
     def migrate_all(self) -> Dict[str, Any]:
         """Migrate all detected providers."""
