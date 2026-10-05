@@ -196,20 +196,28 @@ class SyncEngine:
 
     @staticmethod
     def _filter_mcp(mcp_conf: Optional[Dict[str, Any]], servers: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply providers.<name>.mcp scoping: {"include": [...], "exclude": [...]}.
+        """Drop disabled entries, then apply providers.<name>.mcp scoping:
+        {"include": [...], "exclude": [...]}.
 
         include: sync only the named servers. exclude: sync all except the named.
-        Neither: sync everything.
+        Neither: sync everything. A server flagged "disabled": true is dormant
+        inventory in the unified store and is never exported, even when named
+        in include.
         """
+        active = {
+            k: v
+            for k, v in servers.items()
+            if not (isinstance(v, dict) and v.get("disabled") is True)
+        }
         if not isinstance(mcp_conf, dict):
-            return servers
+            return active
         include = mcp_conf.get("include")
         if isinstance(include, list):
-            return {k: v for k, v in servers.items() if k in include}
+            return {k: v for k, v in active.items() if k in include}
         exclude = mcp_conf.get("exclude") or []
         if isinstance(exclude, list) and exclude:
-            return {k: v for k, v in servers.items() if k not in exclude}
-        return servers
+            return {k: v for k, v in active.items() if k not in exclude}
+        return active
 
     @staticmethod
     def _server_keys(value: Any) -> set:

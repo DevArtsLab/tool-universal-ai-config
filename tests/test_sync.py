@@ -172,6 +172,43 @@ def test_sync_mcp_scoping_exclude(sandbox):
     assert set(mcp["mcpServers"]) == {"github"}
 
 
+def test_sync_skips_disabled_servers(sandbox):
+    """Entries flagged disabled are dormant inventory: never exported."""
+    (sandbox / ".cursor").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    config.save_mcp_servers(
+        {
+            "github": {"command": "a"},
+            "dormant": {"command": "b", "disabled": True},
+        }
+    )
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
+    assert set(mcp["mcpServers"]) == {"github"}
+
+
+def test_sync_disabled_wins_over_include(sandbox):
+    """A disabled server is not exported even when named in include."""
+    (sandbox / ".cursor").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"mcp": {"include": ["github", "dormant"]}}}
+    config.save_unified(unified)
+    config.save_mcp_servers(
+        {
+            "github": {"command": "a"},
+            "dormant": {"command": "b", "disabled": True},
+        }
+    )
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
+    assert set(mcp["mcpServers"]) == {"github"}
+
+
 def test_sync_prune_removes_extra_servers(sandbox):
     (sandbox / ".cursor").mkdir()
     mcp_path = sandbox / ".cursor" / "mcp.json"
