@@ -398,6 +398,9 @@ class SyncEngine:
         managed = set(manifest_path.read_text().split()) if manifest_path.is_file() else set()
         keep = set(names)
 
+        if not names and not managed:
+            return
+
         for name in names:
             src = src_dir / name
             target = dst_dir / name
@@ -408,8 +411,14 @@ class SyncEngine:
                 result.add(provider, "skills", target, "planned", f"would copy {name}")
                 managed.add(name)
                 continue
-            if target.exists():
-                shutil.rmtree(target)
+            if target.is_symlink() or target.exists():
+                if name in managed:
+                    self._remove_path(target)
+                else:
+                    # Not recorded as ours: preserve it, never destroy it.
+                    backup = self._backup_path(target)
+                    shutil.move(str(target), str(backup))
+                    result.add(provider, "skills", backup, "written", f"backed up {name}")
             shutil.copytree(src, target)
             result.add(provider, "skills", target, "written", name)
             managed.add(name)
@@ -421,14 +430,31 @@ class SyncEngine:
                 if dry_run:
                     result.add(provider, "skills", target, "planned", f"would remove {name}")
                     continue
-                if target.is_dir():
-                    shutil.rmtree(target)
+                self._remove_path(target)
                 result.add(provider, "skills", target, "written", f"removed {name}")
             managed -= set(stale)
 
         if not dry_run:
             dst_dir.mkdir(parents=True, exist_ok=True)
             manifest_path.write_text("\n".join(sorted(managed)) + ("\n" if managed else ""))
+
+    @staticmethod
+    def _remove_path(path: Path) -> None:
+        """Delete a managed path whether it is a dir, file, or symlink."""
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        elif path.is_symlink() or path.exists():
+            path.unlink()
+
+    @staticmethod
+    def _backup_path(path: Path) -> Path:
+        """First free '<name>.backup[.n]' sibling for a path being preserved."""
+        backup = path.with_name(path.name + ".backup")
+        n = 2
+        while backup.is_symlink() or backup.exists():
+            backup = path.with_name(f"{path.name}.backup.{n}")
+            n += 1
+        return backup
 
     def _read_rules(self, project_root: Optional[Path]) -> Optional[str]:
         """Unified rules: user AGENTS.md, plus project AGENTS.md if syncing a project."""

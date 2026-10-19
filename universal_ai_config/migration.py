@@ -242,7 +242,9 @@ class ProviderMigrator:
         companion files (references/, scripts/) survive the move."""
         target_root.mkdir(parents=True, exist_ok=True)
         migrated = 0
-        for skill_file in sorted(src_dir.rglob("SKILL.md")):
+        # Depth-1 only: a SKILL.md nested inside a skill's own companion dirs
+        # is part of that skill, not a separate top-level skill.
+        for skill_file in sorted(src_dir.glob("*/SKILL.md")):
             migrated += self._import_one_skill(skill_file.parent, target_root, provider)
         for skill_file in sorted(src_dir.glob("*.md")):
             if skill_file.name != "SKILL.md":
@@ -320,14 +322,18 @@ class ProviderMigrator:
         # dedupes independently against the unified store and other chunks.
         chunks = [self._strip_synced_rules(c) for c in re.split(r"<!-- Migrated from \w+ -->", raw)]
         existing = unified_rules.read_text() if unified_rules.exists() else ""
-        seen = self._normalize_rules(existing)
+        existing_norm = self._normalize_rules(existing)
+        seen: set = set()
         kept = []
         for chunk in chunks:
             n = self._normalize_rules(chunk)
-            if not n or n in seen:
+            # Substring check against the existing file catches chunks already
+            # present there; exact match against seen dedupes repeats without
+            # dropping a distinct chunk that is a substring of another chunk.
+            if not n or n in existing_norm or n in seen:
                 continue
             kept.append(chunk)
-            seen += " " + n
+            seen.add(n)
         additional = "\n\n".join(kept)
 
         if not unified_rules.exists():

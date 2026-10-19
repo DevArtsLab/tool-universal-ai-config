@@ -223,6 +223,36 @@ def test_migrate_rules_strips_managed_blocks_on_reimport(sandbox):
     assert BLOCK_BEGIN not in unified
 
 
+def test_migrate_skills_ignores_nested_skill_md(sandbox):
+    """A SKILL.md inside a skill's companion dirs is not a separate skill."""
+    env = AgentEnv()
+    _write_claude_skill(sandbox, extra={"examples/demo/SKILL.md": "# Nested\n"})
+
+    ProviderMigrator(env).migrate_provider("claude")
+
+    nested = env.skills / "my-skill" / "examples" / "demo" / "SKILL.md"
+    assert nested.read_text() == "# Nested\n"
+    assert not (env.skills / "demo").exists()
+
+
+def test_migrate_rules_keeps_substring_chunk(sandbox):
+    """A distinct chunk that is a substring of an earlier chunk is kept."""
+    env = AgentEnv()
+    (env.config / "AGENTS.md").write_text("# Unified\n")
+    claude = sandbox / ".claude"
+    (claude / "skills").mkdir(parents=True)  # marks provider as present
+    # "- Be nice." is a substring of "- Be nice. Always." but is new content.
+    (claude / "CLAUDE.md").write_text(
+        "- Be nice. Always.\n<!-- Migrated from cursor -->\n- Be nice.\n"
+    )
+
+    ProviderMigrator(env).migrate_provider("claude")
+
+    unified = (env.config / "AGENTS.md").read_text()
+    assert "Be nice. Always." in unified
+    assert unified.count("Be nice") == 2
+
+
 def test_detect_providers_includes_new_ones(sandbox):
     (sandbox / ".cursor").mkdir()
     (sandbox / ".cursor" / "mcp.json").write_text("{}")

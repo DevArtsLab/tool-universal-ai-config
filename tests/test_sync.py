@@ -361,6 +361,76 @@ def test_sync_skills_without_prune_keeps_stale(sandbox):
     assert (sandbox / ".cursor" / "skills" / "demo-skill").exists()
 
 
+def test_sync_skills_preserves_unmanaged_collision(sandbox):
+    """A user-managed same-named dir is backed up, never destroyed."""
+    (sandbox / ".cursor").mkdir()
+    skills = sandbox / ".cursor" / "skills"
+    target = skills / "demo-skill"
+    (target / "references").mkdir(parents=True)
+    (target / "SKILL.md").write_text("# User's own version\n")
+    (target / "references" / "mine.md").write_text("precious\n")
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    assert (target / "SKILL.md").read_text() == "# Demo\n"  # synced copy wins the name
+    backup = skills / "demo-skill.backup"
+    assert (backup / "references" / "mine.md").read_text() == "precious\n"
+    assert "demo-skill" in (skills / ".ai-config-skills").read_text()
+
+
+def test_sync_skills_replaces_managed_dir(sandbox):
+    """A manifest-managed dir that drifted is replaced wholesale."""
+    env = AgentEnv()
+    SyncEngine(env).sync(providers=["cursor"])
+    target = sandbox / ".cursor" / "skills" / "demo-skill"
+    (target / "user-added.md").write_text("mine\n")
+
+    SyncEngine(env).sync(providers=["cursor"])
+
+    assert not (target / "user-added.md").exists()
+    assert not (sandbox / ".cursor" / "skills" / "demo-skill.backup").exists()
+
+
+def test_sync_skills_backs_up_stray_file(sandbox):
+    """A file (not a dir) at an unmanaged skill path is preserved."""
+    (sandbox / ".cursor").mkdir()
+    skills = sandbox / ".cursor" / "skills"
+    skills.mkdir(parents=True)
+    (skills / "demo-skill").write_text("stray file\n")
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    assert (skills / "demo-skill" / "SKILL.md").exists()
+    assert (skills / "demo-skill.backup").read_text() == "stray file\n"
+
+
+def test_sync_skills_unlinks_file_at_managed_path(sandbox):
+    """A file left at a managed path is unlinked, not rmtree'd."""
+    env = AgentEnv()
+    SyncEngine(env).sync(providers=["cursor"])
+    skills = sandbox / ".cursor" / "skills"
+    shutil.rmtree(skills / "demo-skill")
+    (skills / "demo-skill").write_text("stray\n")
+
+    SyncEngine(env).sync(providers=["cursor"])
+
+    assert (skills / "demo-skill" / "SKILL.md").exists()
+    assert not (skills / "demo-skill.backup").exists()
+
+
+def test_sync_skills_empty_scope_creates_nothing(sandbox):
+    """When scoping excludes every skill, no dir or manifest is created."""
+    (sandbox / ".cursor").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"skills": {"exclude": ["demo-skill"]}}}
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    assert not (sandbox / ".cursor" / "skills").exists()
+
+
 def test_sync_without_prune_keeps_extra_servers(sandbox):
     (sandbox / ".cursor").mkdir()
     mcp_path = sandbox / ".cursor" / "mcp.json"
