@@ -17,7 +17,7 @@ from .providers import (
     normalize_mcp_name,
     normalize_mcp_server,
 )
-from .sync import BLOCK_BEGIN, BLOCK_END
+from .sync import dirs_equal, strip_managed_markers
 
 
 class MigrationError(Exception):
@@ -231,32 +231,70 @@ class ProviderMigrator:
         if not legacy_skills or not legacy_skills.exists():
             return
 
-        unified_skills = self.env.skills
-        unified_skills.mkdir(parents=True, exist_ok=True)
-
-        # Copy skills to unified location
-        migrated = 0
-        for skill_file in legacy_skills.rglob("SKILL.md"):
-            skill_name = skill_file.parent.name
-            target_dir = unified_skills / skill_name
-            target_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(skill_file, target_dir / "SKILL.md")
-            print(f"  Migrated skill: {skill_name}")
-            migrated += 1
-
-        # Also migrate loose .md files as skills
-        for skill_file in legacy_skills.glob("*.md"):
-            if skill_file.name == "SKILL.md":
-                continue
-            skill_name = skill_file.stem
-            target_dir = unified_skills / skill_name
-            target_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(skill_file, target_dir / "SKILL.md")
-            print(f"  Migrated skill: {skill_name}")
-            migrated += 1
-
+        migrated = self._import_skills_dir(legacy_skills, self.env.skills, provider)
         if migrated == 0:
-            print(f"  No skills found in {legacy_skills}")
+            print(f"  No new skills found in {legacy_skills}")
+
+    def _import_skills_dir(self, src_dir: Path, target_root: Path, provider: str) -> int:
+        """Copy skills into target_root with MCP-style dedup: identical skills
+        are skipped, a conflicting same-name skill lands under a
+        '<name>.<provider>' alias, and the whole skill directory is copied so
+        companion files (references/, scripts/) survive the move."""
+        target_root.mkdir(parents=True, exist_ok=True)
+        migrated = 0
+        for skill_file in sorted(src_dir.rglob("SKILL.md")):
+            migrated += self._import_one_skill(skill_file.parent, target_root, provider)
+        for skill_file in sorted(src_dir.glob("*.md")):
+            if skill_file.name != "SKILL.md":
+                migrated += self._import_one_loose_skill(skill_file, target_root, provider)
+        return migrated
+
+    def _import_one_skill(self, skill_dir: Path, target_root: Path, provider: str) -> int:
+        name = skill_dir.name
+        target = target_root / name
+        if target.is_dir():
+            if dirs_equal(skill_dir, target):
+                print(f"  Skipping duplicate skill: {name}")
+                return 0
+            # Same name, different content: find or mint an alias, reusing an
+            # existing alias whose content already matches (like MCP dedup).
+            alias = f"{name}.{provider}"
+            n = 2
+            while (target_root / alias).is_dir() and not dirs_equal(skill_dir, target_root / alias):
+                alias = f"{name}.{provider}.{n}"
+                n += 1
+            if (target_root / alias).is_dir():
+                print(f"  Skipping duplicate skill: {name} (as {alias})")
+                return 0
+            print(f"  Skill '{name}' differs from existing; kept as '{alias}'")
+            target = target_root / alias
+        shutil.copytree(skill_dir, target)
+        print(f"  Migrated skill: {target.name}")
+        return 1
+
+    def _import_one_loose_skill(self, skill_file: Path, target_root: Path, provider: str) -> int:
+        name = skill_file.stem
+        target = target_root / name / "SKILL.md"
+        if target.exists():
+            if target.read_bytes() == skill_file.read_bytes():
+                print(f"  Skipping duplicate skill: {name}")
+                return 0
+            alias = f"{name}.{provider}"
+            n = 2
+            while (target_root / alias / "SKILL.md").exists() and (
+                target_root / alias / "SKILL.md"
+            ).read_bytes() != skill_file.read_bytes():
+                alias = f"{name}.{provider}.{n}"
+                n += 1
+            if (target_root / alias / "SKILL.md").exists():
+                print(f"  Skipping duplicate skill: {name} (as {alias})")
+                return 0
+            print(f"  Skill '{name}' differs from existing; kept as '{alias}'")
+            target = target_root / alias / "SKILL.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(skill_file, target)
+        print(f"  Migrated skill: {target.parent.name}")
+        return 1
 
     def _read_rules_source(self, path: Path) -> str:
         """Read rules text from a file or a directory of rule files."""
@@ -277,15 +315,28 @@ class ProviderMigrator:
         unified_rules = self.env.config / "AGENTS.md"
         unified_rules.parent.mkdir(parents=True, exist_ok=True)
 
-        additional = self._strip_synced_rules(self._read_rules_source(legacy_rules))
+        raw = self._read_rules_source(legacy_rules)
+        # Split on migration markers first so each previously appended chunk
+        # dedupes independently against the unified store and other chunks.
+        chunks = [self._strip_synced_rules(c) for c in re.split(r"<!-- Migrated from \w+ -->", raw)]
+        existing = unified_rules.read_text() if unified_rules.exists() else ""
+        seen = self._normalize_rules(existing)
+        kept = []
+        for chunk in chunks:
+            n = self._normalize_rules(chunk)
+            if not n or n in seen:
+                continue
+            kept.append(chunk)
+            seen += " " + n
+        additional = "\n\n".join(kept)
+
         if not unified_rules.exists():
             if additional:
-                unified_rules.write_text(additional)
+                unified_rules.write_text(additional + "\n")
                 print(f"  Migrated rules to: {unified_rules}")
             return
 
-        existing = unified_rules.read_text()
-        if not additional or additional in existing:
+        if not additional:
             print(f"  Rules already up to date: {legacy_rules}")
             return
         unified_rules.write_text(
@@ -294,15 +345,16 @@ class ProviderMigrator:
         print(f"  Appended rules from: {legacy_rules}")
 
     @staticmethod
+    def _normalize_rules(text: str) -> str:
+        """Whitespace-insensitive form for dedupe comparisons."""
+        return re.sub(r"\s+", " ", text).strip()
+
+    @staticmethod
     def _strip_synced_rules(text: str) -> str:
-        """Remove ai-config managed blocks and migration markers so previously
-        exported/migrated content is never re-imported into the unified store."""
-        text = re.sub(
-            re.escape(BLOCK_BEGIN) + r".*?" + re.escape(BLOCK_END) + r"\n?",
-            "",
-            text,
-            flags=re.S,
-        )
+        """Remove ai-config managed blocks (including nested ones) and
+        migration markers so previously exported/migrated content is never
+        re-imported into the unified store."""
+        text = strip_managed_markers(text)
         text = re.sub(r"<!-- Migrated from \w+ -->\n?", "", text)
         return text.strip()
 
@@ -408,15 +460,7 @@ class ProviderMigrator:
             # Migrate project skills
             project_skills = self.get_legacy_path(provider, "project_skills")
             if project_skills and project_skills.exists():
-                unified_skills = ai_dir / "skills"
-                unified_skills.mkdir(exist_ok=True)
-
-                for skill_file in project_skills.rglob("SKILL.md"):
-                    skill_name = skill_file.parent.name
-                    target_dir = unified_skills / skill_name
-                    target_dir.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(skill_file, target_dir / "SKILL.md")
-                    print(f"Migrated {provider} project skill: {skill_name}")
+                self._import_skills_dir(project_skills, ai_dir / "skills", provider)
 
             # Migrate project rules
             project_rules = self._find_first_existing(
@@ -436,33 +480,7 @@ class ProviderMigrator:
         if not skills_dir or not skills_dir.exists():
             return 0
 
-        unified_skills = self.env.skills
-        unified_skills.mkdir(parents=True, exist_ok=True)
-
-        migrated = 0
-        prefix = f"{source_label}: " if source_label else ""
-
-        # Copy structured skills (SKILL.md in subdirectories)
-        for skill_file in skills_dir.rglob("SKILL.md"):
-            skill_name = skill_file.parent.name
-            target_dir = unified_skills / skill_name
-            target_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(skill_file, target_dir / "SKILL.md")
-            print(f"  {prefix}Migrated skill: {skill_name}")
-            migrated += 1
-
-        # Also migrate loose .md files as skills
-        for skill_file in skills_dir.glob("*.md"):
-            if skill_file.name == "SKILL.md":
-                continue
-            skill_name = skill_file.stem
-            target_dir = unified_skills / skill_name
-            target_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(skill_file, target_dir / "SKILL.md")
-            print(f"  {prefix}Migrated skill: {skill_name}")
-            migrated += 1
-
-        return migrated
+        return self._import_skills_dir(skills_dir, self.env.skills, "project")
 
     def find_project_skill_dirs(
         self, search_paths: Optional[List[Path]] = None, max_depth: int = 3

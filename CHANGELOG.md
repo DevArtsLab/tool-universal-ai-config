@@ -4,6 +4,39 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- Skills parity with MCP servers across the migrate/sync lifecycle:
+  - Sync now copies whole skill directories (`SKILL.md` plus companion files
+    like `references/`, `scripts/`, `tests/`) instead of only `SKILL.md`
+  - Per-provider skills scoping via `providers.<name>.skills`:
+    `{"include": [...]}`, `{"exclude": [...]}`, or `{"enabled": false}` to
+    opt a provider out entirely (e.g. when the provider already reads
+    another skills directory and would list every skill twice)
+  - The global `skills.enabled` list is now honored as an allowlist during
+    sync (empty = all skills are candidates)
+  - `--prune` also removes synced skills that left scope. A
+    `.ai-config-skills` manifest inside each provider skills dir records
+    what ai-config wrote, so prune never deletes user-managed skills
+  - Skill migration dedupes identical skills, keeps conflicting same-name
+    skills under a `<name>.<provider>` alias (reused on re-import), and
+    copies the full skill directory
+
+### Fixed
+
+- Managed-block handling no longer corrupts rules files when markers nest:
+  both the sync upsert and the migration strip now flatten nested
+  `BEGIN/END ai-config managed` blocks and remove orphan markers. Exported
+  rules content is sanitized so markers can never be written inside a
+  managed block. Previously, a migrate/sync round trip could append the
+  same rules repeatedly, compounding into thousands of duplicated lines
+- Rules migration now dedupes previously migrated chunks (split on
+  `<!-- Migrated from X -->` markers, whitespace-insensitive compare), so
+  re-importing a provider file that already carries migrated content does
+  not append it again
+
 ## [0.2.1] - 2026-10-05
 
 ### Security

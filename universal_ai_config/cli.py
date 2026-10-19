@@ -426,8 +426,9 @@ def main():
     sync_parser.add_argument(
         "--prune",
         action="store_true",
-        help="Make provider MCP lists an exact mirror of unified config "
-        "(removes extras, backs up files first)",
+        help="Make provider MCP lists an exact mirror of unified config and "
+        "remove synced skills that left scope (backs up files first; "
+        "never deletes skills it did not write)",
     )
     sync_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be written without writing"

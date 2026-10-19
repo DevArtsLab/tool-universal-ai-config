@@ -141,6 +141,88 @@ def test_vscode_registry_name_dedupes(sandbox, capsys):
     assert len(servers) == 1
 
 
+def _write_claude_skill(home, name="my-skill", body="# Skill\n", extra=None):
+    skills = home / ".claude" / "skills" / name
+    skills.mkdir(parents=True, exist_ok=True)
+    (skills / "SKILL.md").write_text(body)
+    for rel, content in (extra or {}).items():
+        f = skills / rel
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(content)
+    return skills
+
+
+def test_migrate_skills_dedupes_identical(sandbox, capsys):
+    env = AgentEnv()
+    src = _write_claude_skill(sandbox)
+    ProviderMigrator(env).migrate_provider("claude")
+
+    capsys.readouterr()
+    ProviderMigrator(env).migrate_provider("claude")
+
+    out = capsys.readouterr().out
+    assert "Skipping duplicate skill: my-skill" in out
+    assert (env.skills / "my-skill" / "SKILL.md").read_text() == "# Skill\n"
+
+
+def test_migrate_skill_conflict_kept_under_alias(sandbox):
+    env = AgentEnv()
+    existing = env.skills / "my-skill"
+    existing.mkdir(parents=True)
+    (existing / "SKILL.md").write_text("# Original\n")
+    _write_claude_skill(sandbox, body="# Different\n")
+
+    ProviderMigrator(env).migrate_provider("claude")
+
+    assert (env.skills / "my-skill" / "SKILL.md").read_text() == "# Original\n"
+    assert (env.skills / "my-skill.claude" / "SKILL.md").read_text() == "# Different\n"
+
+
+def test_migrate_skill_copies_companion_files(sandbox):
+    env = AgentEnv()
+    _write_claude_skill(sandbox, extra={"references/deep.md": "# Deep\n"})
+
+    ProviderMigrator(env).migrate_provider("claude")
+
+    assert (env.skills / "my-skill" / "references" / "deep.md").read_text() == "# Deep\n"
+
+
+def test_migrate_rules_dedupes_migrated_chunks(sandbox):
+    """A provider file carrying previously migrated copies does not grow the
+    unified rules file."""
+    env = AgentEnv()
+    rules = "# Global Rules\n\n- Be nice.\n"
+    claude = sandbox / ".claude"
+    (claude / "skills").mkdir(parents=True)  # marks provider as present
+    # File contains the same rules twice, as left by an earlier migration.
+    (claude / "CLAUDE.md").write_text(rules + "\n<!-- Migrated from devin -->\n" + rules)
+
+    ProviderMigrator(env).migrate_provider("claude")
+
+    unified = (env.config / "AGENTS.md").read_text()
+    assert unified.count("Be nice.") == 1
+
+
+def test_migrate_rules_strips_managed_blocks_on_reimport(sandbox):
+    """Rules synced out and re-imported never re-enter the unified store."""
+    from universal_ai_config.sync import BLOCK_BEGIN, BLOCK_END
+
+    env = AgentEnv()
+    rules = "# Global Rules\n\n- Be nice.\n"
+    claude = sandbox / ".claude"
+    (claude / "skills").mkdir(parents=True)
+    (env.config / "AGENTS.md").write_text(rules)
+    # Simulate a file after sync: managed block wrapping the same rules.
+    (claude / "CLAUDE.md").write_text(f"# Custom\n\n{BLOCK_BEGIN}\n{rules}{BLOCK_END}\n")
+
+    ProviderMigrator(env).migrate_provider("claude")
+
+    unified = (env.config / "AGENTS.md").read_text()
+    assert unified.count("Be nice.") == 1
+    assert "# Custom" in unified
+    assert BLOCK_BEGIN not in unified
+
+
 def test_detect_providers_includes_new_ones(sandbox):
     (sandbox / ".cursor").mkdir()
     (sandbox / ".cursor" / "mcp.json").write_text("{}")

@@ -272,8 +272,10 @@ directly (see Provider Integration) without any file export.
 
 Sync merges by default: existing keys in provider files are preserved, so
 servers added outside the unified config survive. Pass `--prune` to make a
-provider's MCP list an exact mirror of its scoped unified set; pruned files
-are backed up with a `.backup` suffix first.
+provider's MCP list an exact mirror of its scoped unified set and to remove
+synced skills that left scope; pruned files are backed up with a `.backup`
+suffix first, and skills outside the `.ai-config-skills` manifest are left
+untouched.
 
 #### Per-provider MCP scoping
 
@@ -293,6 +295,32 @@ in `~/.agents/config/config.json`:
 servers from the full set. Use this to keep credential-bearing MCP configs
 out of providers that don't need them. Servers marked `"disabled": true` in
 `mcp-config.json` are never exported, even when named in `include`.
+
+#### Per-provider skills scoping
+
+Skills follow the same scoping rules. Whole skill directories are copied
+(`SKILL.md` plus companion files like `references/` and `scripts/`), and
+synced names are recorded in a `.ai-config-skills` manifest inside each
+provider's skills dir. `--prune` removes only skills recorded in that
+manifest, so skills you placed in a provider dir yourself are never
+deleted.
+
+```json
+{
+  "skills": { "enabled": ["skill-a", "skill-b"] },
+  "providers": {
+    "cursor": { "skills": { "include": ["skill-a"] } },
+    "devin": { "skills": { "enabled": false } }
+  }
+}
+```
+
+`skills.enabled` is a global allowlist (empty means all skills are
+candidates). `providers.<name>.skills` then narrows per provider:
+`include` allowlists, `exclude` removes, and `"enabled": false` opts the
+provider out of skill sync entirely - useful when a provider already reads
+another location (e.g. Devin scanning `~/.claude/skills`), which would
+otherwise list every skill twice.
 
 Rules synced into shared files (like a project `AGENTS.md`) are wrapped in
 `<!-- BEGIN ai-config managed -->` markers so repeated syncs update in place
@@ -335,7 +363,11 @@ supported.
 MCP servers are deduplicated on import: identical entries merge, and a
 same-name server with a different config is kept under a `<name>.<provider>`
 alias (e.g. `github.cursor`) rather than silently overwriting the existing
-one.
+one. Skills get the same treatment: identical skills are skipped, a
+conflicting same-name skill lands under `<name>.<provider>`, and the whole
+skill directory (not just `SKILL.md`) is copied. Rules imports strip managed
+blocks and dedupe previously migrated chunks, so re-running `migrate` never
+grows the unified `AGENTS.md`.
 
 Legacy configs are backed up with `.backup` extension.
 

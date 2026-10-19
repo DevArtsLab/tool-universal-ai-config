@@ -1,6 +1,7 @@
 """Tests for the sync engine (unified -> provider-native write-out)."""
 
 import json
+import shutil
 import pytest
 from pathlib import Path
 
@@ -221,6 +222,143 @@ def test_sync_prune_removes_extra_servers(sandbox):
     assert "stale" not in mcp["mcpServers"]
     assert "github" in mcp["mcpServers"]
     assert (sandbox / ".cursor" / "mcp.json.backup").exists()
+
+
+def test_sync_cleans_nested_managed_blocks(sandbox):
+    """A rules file corrupted by nested managed blocks is flattened to one."""
+    (sandbox / ".claude").mkdir()
+    target = sandbox / ".claude" / "CLAUDE.md"
+    target.write_text(
+        "# head\n" f"{BLOCK_BEGIN}\nold outer\n{BLOCK_BEGIN}\nnested\n{BLOCK_END}\n{BLOCK_END}\n"
+    )
+
+    SyncEngine(AgentEnv()).sync(providers=["claude"])
+
+    text = target.read_text()
+    assert text.count(BLOCK_BEGIN) == 1
+    assert text.count(BLOCK_END) == 1
+    assert "old outer" not in text and "nested" not in text
+    assert "# head" in text
+
+
+def test_sync_never_exports_markers_inside_block(sandbox):
+    """Markers in the unified rules text are stripped before wrapping."""
+    (sandbox / ".claude").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    (config.env.config / "AGENTS.md").write_text(
+        f"# Rules\n\n{BLOCK_BEGIN}\nsneaky\n{BLOCK_END}\n\nBe nice.\n"
+    )
+    target = sandbox / ".claude" / "CLAUDE.md"
+
+    SyncEngine(AgentEnv()).sync(providers=["claude"])
+
+    text = target.read_text()
+    assert text.count(BLOCK_BEGIN) == 1
+    assert text.count(BLOCK_END) == 1
+    assert "sneaky" not in text
+    assert "Be nice." in text
+
+
+def test_sync_skills_copies_companion_files(sandbox):
+    """Whole skill directories are copied, not just SKILL.md."""
+    (sandbox / ".cursor").mkdir()
+    skill = AgentEnv().skills / "demo-skill"
+    (skill / "references").mkdir(parents=True)
+    (skill / "references" / "deep.md").write_text("# Deep\n")
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    target = sandbox / ".cursor" / "skills" / "demo-skill"
+    assert (target / "SKILL.md").exists()
+    assert (target / "references" / "deep.md").read_text() == "# Deep\n"
+
+
+def test_sync_skills_scoping_include(sandbox):
+    (sandbox / ".cursor").mkdir()
+    (AgentEnv().skills / "other-skill").mkdir()
+    (AgentEnv().skills / "other-skill" / "SKILL.md").write_text("# Other\n")
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"skills": {"include": ["demo-skill"]}}}
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    assert (sandbox / ".cursor" / "skills" / "demo-skill").exists()
+    assert not (sandbox / ".cursor" / "skills" / "other-skill").exists()
+
+
+def test_sync_skills_scoping_exclude(sandbox):
+    (sandbox / ".cursor").mkdir()
+    (AgentEnv().skills / "other-skill").mkdir()
+    (AgentEnv().skills / "other-skill" / "SKILL.md").write_text("# Other\n")
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"skills": {"exclude": ["other-skill"]}}}
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    assert (sandbox / ".cursor" / "skills" / "demo-skill").exists()
+    assert not (sandbox / ".cursor" / "skills" / "other-skill").exists()
+
+
+def test_sync_skills_provider_disabled(sandbox):
+    """providers.<name>.skills.enabled: false opts out of skills sync."""
+    (sandbox / ".cursor").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"skills": {"enabled": False}}}
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    assert not (sandbox / ".cursor" / "skills").exists()
+
+
+def test_sync_skills_global_enabled_allowlist(sandbox):
+    """A non-empty skills.enabled list limits which skills sync at all."""
+    (sandbox / ".cursor").mkdir()
+    (AgentEnv().skills / "other-skill").mkdir()
+    (AgentEnv().skills / "other-skill" / "SKILL.md").write_text("# Other\n")
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["skills"] = {"enabled": ["demo-skill"], "paths": []}
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    assert (sandbox / ".cursor" / "skills" / "demo-skill").exists()
+    assert not (sandbox / ".cursor" / "skills" / "other-skill").exists()
+
+
+def test_sync_skills_prune_removes_only_managed(sandbox):
+    """--prune removes skills ai-config previously synced but never user dirs."""
+    (sandbox / ".cursor").mkdir()
+    env = AgentEnv()
+    SyncEngine(env).sync(providers=["cursor"])
+
+    target = sandbox / ".cursor" / "skills"
+    assert (target / "demo-skill").exists()
+    (target / "user-skill").mkdir()  # never managed by ai-config
+    (target / "user-skill" / "SKILL.md").write_text("# Mine\n")
+    shutil.rmtree(env.skills / "demo-skill")  # dropped from unified set
+
+    SyncEngine(env).sync(providers=["cursor"], prune=True)
+
+    assert not (target / "demo-skill").exists()
+    assert (target / "user-skill" / "SKILL.md").exists()
+
+
+def test_sync_skills_without_prune_keeps_stale(sandbox):
+    (sandbox / ".cursor").mkdir()
+    env = AgentEnv()
+    SyncEngine(env).sync(providers=["cursor"])
+    shutil.rmtree(env.skills / "demo-skill")
+
+    SyncEngine(env).sync(providers=["cursor"])
+
+    assert (sandbox / ".cursor" / "skills" / "demo-skill").exists()
 
 
 def test_sync_without_prune_keeps_extra_servers(sandbox):

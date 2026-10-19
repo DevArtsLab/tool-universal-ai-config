@@ -19,6 +19,41 @@ from .providers import PROVIDERS, ProviderSpec, SyncTargets, expand, render_mcp_
 BLOCK_BEGIN = "<!-- BEGIN ai-config managed -->"
 BLOCK_END = "<!-- END ai-config managed -->"
 
+# Tracks which skill dirs under a provider's skills_dir were written by
+# ai-config, so --prune only ever removes managed skills and never deletes
+# skills the user placed there themselves.
+SKILLS_MANIFEST = ".ai-config-skills"
+
+_BLOCK_RE = re.compile(re.escape(BLOCK_BEGIN) + r".*?" + re.escape(BLOCK_END) + r"\n?", re.S)
+_ORPHAN_MARKER_RE = re.compile(r"<!-- (?:BEGIN|END) ai-config managed -->\n?")
+
+
+def strip_managed_markers(text: str) -> str:
+    """Remove every ai-config managed block from text.
+
+    A non-greedy BEGIN..END match removes the innermost span first, so
+    repeating it flattens nested blocks left behind by older exports whose
+    content itself contained the markers. A final pass drops orphan markers
+    (an END whose BEGIN was consumed by an outer span).
+    """
+    while True:
+        stripped = _BLOCK_RE.sub("", text)
+        if stripped == text:
+            break
+        text = stripped
+    return _ORPHAN_MARKER_RE.sub("", text)
+
+
+def dirs_equal(a: Path, b: Path) -> bool:
+    """True when both directories hold the same files with equal bytes."""
+    if not a.is_dir() or not b.is_dir():
+        return False
+    a_files = {p.relative_to(a) for p in a.rglob("*") if p.is_file()}
+    b_files = {p.relative_to(b) for p in b.rglob("*") if p.is_file()}
+    if a_files != b_files:
+        return False
+    return all((a / rel).read_bytes() == (b / rel).read_bytes() for rel in a_files)
+
 
 @dataclass
 class SyncAction:
@@ -46,10 +81,9 @@ def _upsert_managed_block(path: Path, content: str) -> None:
         path.write_text(block)
         return
 
-    # Remove every existing managed block, not just the first: leftover
+    # Remove every existing managed block, including nested ones: leftover
     # blocks from older runs would otherwise accumulate on each sync.
-    pattern = re.compile(re.escape(BLOCK_BEGIN) + r".*?" + re.escape(BLOCK_END) + r"\n?", re.S)
-    existing = pattern.sub("", path.read_text()).rstrip()
+    existing = strip_managed_markers(path.read_text()).rstrip()
     path.write_text(f"{existing}\n\n{block}" if existing else block)
 
 
@@ -82,6 +116,7 @@ class SyncEngine:
         )
         mcp_servers = unified.get("context_servers", {})
         provider_settings = unified.get("providers", {})
+        skills_conf = unified.get("skills", {})
 
         if providers:
             unknown = [p for p in providers if p not in PROVIDERS]
@@ -120,6 +155,7 @@ class SyncEngine:
                 base,
                 settings,
                 mcp_servers,
+                skills_conf,
                 rules_text,
                 skills_dir,
                 result,
@@ -136,6 +172,7 @@ class SyncEngine:
         base: Optional[Path],
         settings: Dict[str, Any],
         mcp_servers: Dict[str, Any],
+        skills_conf: Dict[str, Any],
         rules_text: Optional[str],
         skills_dir: Path,
         result: SyncResult,
@@ -184,8 +221,9 @@ class SyncEngine:
         # Skills
         if scope.skills_dir and skills_dir and skills_dir.exists():
             target_dir = self._resolve(scope.skills_dir, base)
-            if target_dir:
-                self._write_skills(skills_dir, target_dir, spec.name, result, dry_run)
+            names = self._scoped_skill_names(settings.get("skills"), skills_conf, skills_dir)
+            if target_dir and names is not None:
+                self._write_skills(skills_dir, target_dir, spec.name, names, result, prune, dry_run)
 
     def _resolve(self, path_str: Optional[str], base: Optional[Path]) -> Optional[Path]:
         if not path_str:
@@ -218,6 +256,42 @@ class SyncEngine:
         if isinstance(exclude, list) and exclude:
             return {k: v for k, v in active.items() if k not in exclude}
         return active
+
+    @staticmethod
+    def _list_skill_names(skills_dir: Path) -> List[str]:
+        """Skill names in a directory: subdirs containing a SKILL.md."""
+        return sorted(
+            d.name for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()
+        )
+
+    def _scoped_skill_names(
+        self,
+        prov_conf: Optional[Dict[str, Any]],
+        global_conf: Optional[Dict[str, Any]],
+        skills_dir: Path,
+    ) -> Optional[List[str]]:
+        """Skill names in scope for one provider, or None when the provider
+        opted out of skills entirely (providers.<name>.skills.enabled: false).
+
+        The global skills.enabled list is an allowlist when non-empty.
+        providers.<name>.skills then narrows further with include/exclude,
+        mirroring the MCP scoping rules.
+        """
+        if isinstance(prov_conf, dict) and prov_conf.get("enabled") is False:
+            return None
+        names = self._list_skill_names(skills_dir)
+        enabled = (global_conf or {}).get("enabled")
+        if isinstance(enabled, list) and enabled:
+            names = [n for n in names if n in enabled]
+        if not isinstance(prov_conf, dict):
+            return names
+        include = prov_conf.get("include")
+        if isinstance(include, list):
+            return [n for n in names if n in include]
+        exclude = prov_conf.get("exclude")
+        if isinstance(exclude, list) and exclude:
+            return [n for n in names if n not in exclude]
+        return names
 
     @staticmethod
     def _server_keys(value: Any) -> set:
@@ -281,6 +355,10 @@ class SyncEngine:
     def _write_rules(
         self, path: Path, content: str, mode: str, provider: str, result: SyncResult, dry_run: bool
     ) -> None:
+        # The exported text must never carry managed-block markers: a unified
+        # rules file that acquired them through a buggy import would otherwise
+        # nest blocks inside the block on every sync.
+        content = strip_managed_markers(content)
         if mode in ("mdc_dir", "md_dir"):
             path = path / ("ai-config.mdc" if mode == "mdc_dir" else "ai-config.md")
             if mode == "mdc_dir":
@@ -304,24 +382,53 @@ class SyncEngine:
         result.add(provider, "rules", path, "written")
 
     def _write_skills(
-        self, src_dir: Path, dst_dir: Path, provider: str, result: SyncResult, dry_run: bool
+        self,
+        src_dir: Path,
+        dst_dir: Path,
+        provider: str,
+        names: List[str],
+        result: SyncResult,
+        prune: bool,
+        dry_run: bool,
     ) -> None:
-        for skill in sorted(src_dir.iterdir()):
-            if not skill.is_dir() or not (skill / "SKILL.md").exists():
-                continue
-            target = dst_dir / skill.name
-            target_skill = target / "SKILL.md"
-            if (
-                target_skill.exists()
-                and target_skill.read_text() == (skill / "SKILL.md").read_text()
-            ):
+        """Copy whole skill directories (SKILL.md plus companion files) to the
+        provider. A manifest file records what ai-config wrote so --prune can
+        remove stale managed skills without touching user-managed ones."""
+        manifest_path = dst_dir / SKILLS_MANIFEST
+        managed = set(manifest_path.read_text().split()) if manifest_path.is_file() else set()
+        keep = set(names)
+
+        for name in names:
+            src = src_dir / name
+            target = dst_dir / name
+            if dirs_equal(src, target):
+                managed.add(name)
                 continue
             if dry_run:
-                result.add(provider, "skills", target, "planned", f"would copy {skill.name}")
+                result.add(provider, "skills", target, "planned", f"would copy {name}")
+                managed.add(name)
                 continue
-            target.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(skill / "SKILL.md", target / "SKILL.md")
-            result.add(provider, "skills", target, "written", skill.name)
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(src, target)
+            result.add(provider, "skills", target, "written", name)
+            managed.add(name)
+
+        stale = sorted(managed - keep)
+        if prune:
+            for name in stale:
+                target = dst_dir / name
+                if dry_run:
+                    result.add(provider, "skills", target, "planned", f"would remove {name}")
+                    continue
+                if target.is_dir():
+                    shutil.rmtree(target)
+                result.add(provider, "skills", target, "written", f"removed {name}")
+            managed -= set(stale)
+
+        if not dry_run:
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text("\n".join(sorted(managed)) + ("\n" if managed else ""))
 
     def _read_rules(self, project_root: Optional[Path]) -> Optional[str]:
         """Unified rules: user AGENTS.md, plus project AGENTS.md if syncing a project."""
