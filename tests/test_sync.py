@@ -5,6 +5,11 @@ import shutil
 import pytest
 from pathlib import Path
 
+try:
+    import tomllib as _tomllib
+except ImportError:  # Python < 3.11
+    import tomli as _tomllib
+
 from universal_ai_config.config import UnifiedConfig
 from universal_ai_config.environment import AgentEnv
 from universal_ai_config.sync import (
@@ -100,9 +105,7 @@ def test_sync_codex_toml(sandbox):
     engine = SyncEngine(AgentEnv())
     engine.sync(providers=["codex"])
 
-    import tomllib
-
-    data = tomllib.loads((sandbox / ".codex" / "config.toml").read_text())
+    data = _tomllib.loads((sandbox / ".codex" / "config.toml").read_text())
     assert data["mcp_servers"]["github"]["command"] == "npx"
     assert (sandbox / ".codex" / "AGENTS.md").exists()
 
