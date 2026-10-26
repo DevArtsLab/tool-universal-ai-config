@@ -320,7 +320,9 @@ class ProviderMigrator:
         raw = self._read_rules_source(legacy_rules)
         # Split on migration markers first so each previously appended chunk
         # dedupes independently against the unified store and other chunks.
-        chunks = [self._strip_synced_rules(c) for c in re.split(r"<!-- Migrated from \w+ -->", raw)]
+        chunks = [
+            self._strip_synced_rules(c) for c in re.split(r"<!-- Migrated from [\w.-]+ -->", raw)
+        ]
         existing = unified_rules.read_text() if unified_rules.exists() else ""
         existing_norm = self._normalize_rules(existing)
         seen: set = set()
@@ -361,7 +363,7 @@ class ProviderMigrator:
         migration markers so previously exported/migrated content is never
         re-imported into the unified store."""
         text = strip_managed_markers(text)
-        text = re.sub(r"<!-- Migrated from \w+ -->\n?", "", text)
+        text = re.sub(r"<!-- Migrated from [\w.-]+ -->\n?", "", text)
         return text.strip()
 
     def migrate_all(self) -> Dict[str, Any]:

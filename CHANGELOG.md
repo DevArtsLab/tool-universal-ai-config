@@ -6,36 +6,32 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-26
+
 ### Added
 
-- Skills parity with MCP servers across the migrate/sync lifecycle:
-  - Sync now copies whole skill directories (`SKILL.md` plus companion files
-    like `references/`, `scripts/`, `tests/`) instead of only `SKILL.md`
-  - Per-provider skills scoping via `providers.<name>.skills`:
-    `{"include": [...]}`, `{"exclude": [...]}`, or `{"enabled": false}` to
-    opt a provider out entirely (e.g. when the provider already reads
-    another skills directory and would list every skill twice)
-  - The global `skills.enabled` list is now honored as an allowlist during
-    sync (empty = all skills are candidates)
-  - `--prune` also removes synced skills that left scope. A
-    `.ai-config-skills` manifest inside each provider skills dir records
-    what ai-config wrote, so prune never deletes user-managed skills
-  - Skill migration dedupes identical skills, keeps conflicting same-name
-    skills under a `<name>.<provider>` alias (reused on re-import), and
-    copies the full skill directory
+- Sync copies whole skill directories, not just `SKILL.md`
+- Per-provider skills scoping: `providers.<name>.skills` with `include`,
+  `exclude`, or `enabled: false`
+- Global `skills.enabled` list honored as a sync allowlist
+- `--prune` removes synced skills that left scope, tracked via a
+  `.ai-config-skills` manifest so user skills are never deleted
+- Skill migration dedupes identical skills; conflicting same-name skills
+  are kept under a `<name>.<provider>` alias
+- `ai-config --version`
+- CI runs pytest, `black --check`, and `mypy` on every push and PR to main
 
 ### Fixed
 
-- Managed-block handling no longer corrupts rules files when markers nest:
-  both the sync upsert and the migration strip now flatten nested
-  `BEGIN/END ai-config managed` blocks and remove orphan markers. Exported
-  rules content is sanitized so markers can never be written inside a
-  managed block. Previously, a migrate/sync round trip could append the
-  same rules repeatedly, compounding into thousands of duplicated lines
-- Rules migration now dedupes previously migrated chunks (split on
-  `<!-- Migrated from X -->` markers, whitespace-insensitive compare), so
-  re-importing a provider file that already carries migrated content does
-  not append it again
+- Nested `BEGIN/END ai-config managed` blocks are flattened correctly,
+  including text stranded between inner and outer END markers
+- Exported rules can no longer carry markers that nest managed blocks
+- Rules migration dedupes previously migrated chunks instead of
+  compounding duplicated lines on re-import
+- `<!-- Migrated from X -->` markers match hyphenated/dotted provider names
+- Displaced user skills move to hidden `.ai-config-backups/`; `<name>.backup`
+  siblings appeared to providers as phantom skills
+- Sync skips rewriting rules files whose managed block is unchanged
 
 ## [0.2.1] - 2026-10-05
 

@@ -24,24 +24,46 @@ BLOCK_END = "<!-- END ai-config managed -->"
 # skills the user placed there themselves.
 SKILLS_MANIFEST = ".ai-config-skills"
 
-_BLOCK_RE = re.compile(re.escape(BLOCK_BEGIN) + r".*?" + re.escape(BLOCK_END) + r"\n?", re.S)
-_ORPHAN_MARKER_RE = re.compile(r"<!-- (?:BEGIN|END) ai-config managed -->\n?")
+_MARKER_RE = re.compile(r"<!-- (BEGIN|END) ai-config managed -->\n?")
+
+# Holds user-owned skills moved aside by a sync. Kept in a hidden dir one
+# level deeper than the skills themselves so no provider (or a later
+# migrate) discovers a backup's SKILL.md as a real skill.
+SKILLS_BACKUP_DIR = ".ai-config-backups"
 
 
 def strip_managed_markers(text: str) -> str:
     """Remove every ai-config managed block from text.
 
-    A non-greedy BEGIN..END match removes the innermost span first, so
-    repeating it flattens nested blocks left behind by older exports whose
-    content itself contained the markers. A final pass drops orphan markers
-    (an END whose BEGIN was consumed by an outer span).
+    Markers are scanned with a depth counter, so a nested span left behind
+    by older exports whose content itself contained the markers is removed
+    whole - including any text between an inner END and the outer END. An
+    orphan END and the marker of an unclosed BEGIN are dropped without
+    eating real content.
     """
-    while True:
-        stripped = _BLOCK_RE.sub("", text)
-        if stripped == text:
-            break
-        text = stripped
-    return _ORPHAN_MARKER_RE.sub("", text)
+    out: List[str] = []
+    depth = 0
+    pos = 0
+    span_start: Optional[int] = None
+    for m in _MARKER_RE.finditer(text):
+        if m.group(1) == "BEGIN":
+            if depth == 0:
+                out.append(text[pos : m.start()])
+                span_start = m.start()
+            depth += 1
+        elif depth > 0:
+            depth -= 1
+            if depth == 0:
+                pos = m.end()
+        else:  # orphan END with no open block: drop only the marker
+            out.append(text[pos : m.start()])
+            pos = m.end()
+    if depth > 0 and span_start is not None:
+        # Outermost block never closed: keep the text inside minus markers.
+        out.append(_MARKER_RE.sub("", text[span_start:]))
+    else:
+        out.append(text[pos:])
+    return "".join(out)
 
 
 def dirs_equal(a: Path, b: Path) -> bool:
@@ -72,19 +94,23 @@ class SyncResult:
         self.actions.append(SyncAction(provider, kind, Path(path), status, detail))
 
 
-def _upsert_managed_block(path: Path, content: str) -> None:
-    """Insert or replace the ai-config managed block in a text file."""
+def _upsert_managed_block(path: Path, content: str) -> bool:
+    """Insert or replace the ai-config managed block; True if file changed."""
     block = f"{BLOCK_BEGIN}\n{content.rstrip()}\n{BLOCK_END}\n"
     path.parent.mkdir(parents=True, exist_ok=True)
 
     if not path.exists():
         path.write_text(block)
-        return
+        return True
 
     # Remove every existing managed block, including nested ones: leftover
     # blocks from older runs would otherwise accumulate on each sync.
     existing = strip_managed_markers(path.read_text()).rstrip()
-    path.write_text(f"{existing}\n\n{block}" if existing else block)
+    new_text = f"{existing}\n\n{block}" if existing else block
+    if path.read_text() == new_text:
+        return False
+    path.write_text(new_text)
+    return True
 
 
 class SyncEngine:
@@ -366,11 +392,15 @@ class SyncEngine:
                     "---\ndescription: Unified AI agent rules "
                     "(managed by ai-config)\nalwaysApply: true\n---\n\n" + content
                 )
+            new_text = content if content.endswith("\n") else content + "\n"
             if dry_run:
                 result.add(provider, "rules", path, "planned", "would write")
                 return
+            if path.exists() and path.read_text() == new_text:
+                result.add(provider, "rules", path, "skipped", "unchanged")
+                return
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(content if content.endswith("\n") else content + "\n")
+            path.write_text(new_text)
             result.add(provider, "rules", path, "written")
             return
 
@@ -378,8 +408,10 @@ class SyncEngine:
         if dry_run:
             result.add(provider, "rules", path, "planned", "would upsert managed block")
             return
-        _upsert_managed_block(path, content)
-        result.add(provider, "rules", path, "written")
+        if _upsert_managed_block(path, content):
+            result.add(provider, "rules", path, "written")
+        else:
+            result.add(provider, "rules", path, "skipped", "unchanged")
 
     def _write_skills(
         self,
@@ -416,7 +448,8 @@ class SyncEngine:
                     self._remove_path(target)
                 else:
                     # Not recorded as ours: preserve it, never destroy it.
-                    backup = self._backup_path(target)
+                    backup = self._backup_path(dst_dir, name)
+                    backup.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(target), str(backup))
                     result.add(provider, "skills", backup, "written", f"backed up {name}")
             shutil.copytree(src, target)
@@ -447,12 +480,15 @@ class SyncEngine:
             path.unlink()
 
     @staticmethod
-    def _backup_path(path: Path) -> Path:
-        """First free '<name>.backup[.n]' sibling for a path being preserved."""
-        backup = path.with_name(path.name + ".backup")
+    def _backup_path(dst_dir: Path, name: str) -> Path:
+        """First free '<name>[.n]' path inside the hidden backups dir. A
+        '<name>.backup' sibling would still hold a SKILL.md that providers
+        discover as a skill, so backups live under .ai-config-backups/."""
+        backups = dst_dir / SKILLS_BACKUP_DIR
+        backup = backups / name
         n = 2
         while backup.is_symlink() or backup.exists():
-            backup = path.with_name(f"{path.name}.backup.{n}")
+            backup = backups / f"{name}.{n}"
             n += 1
         return backup
 

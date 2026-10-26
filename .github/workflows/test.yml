@@ -2,7 +2,6 @@ name: Test Installation
 
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
 
@@ -26,7 +25,15 @@ jobs:
       - name: Install package
         run: |
           pip install --upgrade pip
-          pip install -e .
+          pip install -e ".[dev]"
+
+      - name: Run test suite
+        run: pytest
+
+      - name: Lint and typecheck
+        run: |
+          black --check universal_ai_config/
+          mypy universal_ai_config/
 
       - name: Test CLI
         run: |

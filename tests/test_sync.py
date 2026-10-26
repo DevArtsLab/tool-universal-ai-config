@@ -7,7 +7,13 @@ from pathlib import Path
 
 from universal_ai_config.config import UnifiedConfig
 from universal_ai_config.environment import AgentEnv
-from universal_ai_config.sync import SyncEngine, BLOCK_BEGIN, BLOCK_END
+from universal_ai_config.sync import (
+    SyncEngine,
+    BLOCK_BEGIN,
+    BLOCK_END,
+    SKILLS_BACKUP_DIR,
+    strip_managed_markers,
+)
 
 
 @pytest.fixture
@@ -241,6 +247,47 @@ def test_sync_cleans_nested_managed_blocks(sandbox):
     assert "# head" in text
 
 
+def test_sync_cleans_nested_blocks_with_interstitial_text(sandbox):
+    """Text between an inner END and the outer END is part of the nested
+    block and must not survive as residue."""
+    (sandbox / ".claude").mkdir()
+    target = sandbox / ".claude" / "CLAUDE.md"
+    target.write_text(
+        "# head\n"
+        f"{BLOCK_BEGIN}\nouter\n{BLOCK_BEGIN}\ninner\n{BLOCK_END}\nresidue\n{BLOCK_END}\n"
+    )
+
+    SyncEngine(AgentEnv()).sync(providers=["claude"])
+
+    text = target.read_text()
+    assert text.count(BLOCK_BEGIN) == 1
+    assert text.count(BLOCK_END) == 1
+    assert "outer" not in text and "inner" not in text and "residue" not in text
+    assert "# head" in text
+
+
+def test_strip_managed_markers_unclosed_begin_keeps_content():
+    """An unclosed BEGIN drops only the marker, not the text after it."""
+    text = strip_managed_markers(f"# head\n{BLOCK_BEGIN}\norphaned content\n")
+    assert "orphaned content" in text
+    assert "# head" in text
+    assert BLOCK_BEGIN not in text and BLOCK_END not in text
+
+
+def test_sync_skips_unchanged_rules(sandbox):
+    """A second sync reports rules as skipped instead of rewriting them."""
+    (sandbox / ".claude").mkdir()
+    engine = SyncEngine(AgentEnv())
+    engine.sync(providers=["claude"])
+    before = (sandbox / ".claude" / "CLAUDE.md").stat().st_mtime_ns
+
+    result = engine.sync(providers=["claude"])
+
+    rules = [a for a in result.actions if a.kind == "rules"]
+    assert rules and all(a.status == "skipped" for a in rules)
+    assert (sandbox / ".claude" / "CLAUDE.md").stat().st_mtime_ns == before
+
+
 def test_sync_never_exports_markers_inside_block(sandbox):
     """Markers in the unified rules text are stripped before wrapping."""
     (sandbox / ".claude").mkdir()
@@ -373,8 +420,12 @@ def test_sync_skills_preserves_unmanaged_collision(sandbox):
     SyncEngine(AgentEnv()).sync(providers=["cursor"])
 
     assert (target / "SKILL.md").read_text() == "# Demo\n"  # synced copy wins the name
-    backup = skills / "demo-skill.backup"
+    backup = skills / SKILLS_BACKUP_DIR / "demo-skill"
     assert (backup / "references" / "mine.md").read_text() == "precious\n"
+    # Backups live a level deeper in a hidden dir, so nothing at the top
+    # level of the skills dir can be discovered as a phantom skill.
+    assert not (skills / "demo-skill.backup").exists()
+    assert SyncEngine._list_skill_names(skills) == ["demo-skill"]
     assert "demo-skill" in (skills / ".ai-config-skills").read_text()
 
 
@@ -388,7 +439,7 @@ def test_sync_skills_replaces_managed_dir(sandbox):
     SyncEngine(env).sync(providers=["cursor"])
 
     assert not (target / "user-added.md").exists()
-    assert not (sandbox / ".cursor" / "skills" / "demo-skill.backup").exists()
+    assert not (sandbox / ".cursor" / "skills" / SKILLS_BACKUP_DIR).exists()
 
 
 def test_sync_skills_backs_up_stray_file(sandbox):
@@ -401,7 +452,7 @@ def test_sync_skills_backs_up_stray_file(sandbox):
     SyncEngine(AgentEnv()).sync(providers=["cursor"])
 
     assert (skills / "demo-skill" / "SKILL.md").exists()
-    assert (skills / "demo-skill.backup").read_text() == "stray file\n"
+    assert (skills / SKILLS_BACKUP_DIR / "demo-skill").read_text() == "stray file\n"
 
 
 def test_sync_skills_unlinks_file_at_managed_path(sandbox):
@@ -415,7 +466,7 @@ def test_sync_skills_unlinks_file_at_managed_path(sandbox):
     SyncEngine(env).sync(providers=["cursor"])
 
     assert (skills / "demo-skill" / "SKILL.md").exists()
-    assert not (skills / "demo-skill.backup").exists()
+    assert not (skills / SKILLS_BACKUP_DIR).exists()
 
 
 def test_sync_skills_empty_scope_creates_nothing(sandbox):

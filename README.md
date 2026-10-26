@@ -273,9 +273,10 @@ directly (see Provider Integration) without any file export.
 Sync merges by default: existing keys in provider files are preserved, so
 servers added outside the unified config survive. Pass `--prune` to make a
 provider's MCP list an exact mirror of its scoped unified set and to remove
-synced skills that left scope; pruned files are backed up with a `.backup`
-suffix first, and skills outside the `.ai-config-skills` manifest are left
-untouched.
+synced skills that left scope; pruned MCP files are backed up with a
+`.backup` suffix first, and skills outside the `.ai-config-skills` manifest
+are left untouched. A skill name already claimed by a user-managed dir or
+file is preserved under `.ai-config-backups/` in that skills dir.
 
 #### Per-provider MCP scoping
 

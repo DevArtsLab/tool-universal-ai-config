@@ -7,6 +7,7 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Dict, Optional
+from . import __version__
 from .environment import AgentEnv, find_project_root
 from .config import UnifiedConfig, ConfigError
 from .migration import ProviderMigrator, MigrationError
@@ -366,6 +367,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Universal AI Configuration Manager", prog="ai-config"
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
