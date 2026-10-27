@@ -275,8 +275,19 @@ class SyncEngine:
 
         # MCP servers, filtered through per-provider scoping
         scoped = self._filter_mcp(settings.get("mcp"), mcp_servers)
+        if mcp_servers and "mcp" not in settings:
+            print(
+                f"  {spec.name}: no providers.{spec.name}.mcp scope - "
+                'no servers exported (add "include": ["*"] or a name list)'
+            )
         mcp_path = self._resolve(scope.mcp_file, base)
-        if mcp_path and scoped and scope.mcp_key:
+        # An explicit mcp scope plus --prune mirrors even an empty grant
+        # (include: [] wipes the provider's managed key).
+        if (
+            mcp_path
+            and scope.mcp_key
+            and (scoped or (prune and isinstance(settings.get("mcp"), dict)))
+        ):
             rendered = render_mcp_servers(scope.mcp_style, scoped)
             self._write_merged(
                 mcp_path,
@@ -332,10 +343,12 @@ class SyncEngine:
         """Drop disabled entries, then apply providers.<name>.mcp scoping:
         {"include": [...], "exclude": [...]}.
 
-        include: sync only the named servers. exclude: sync all except the named.
-        Neither: sync everything. A server flagged "disabled": true is dormant
-        inventory in the unified store and is never exported, even when named
-        in include.
+        Export is fail-closed: without an "include" list nothing reaches the
+        provider, so the shared unified set can never flood a native file.
+        "include": ["*"] exports every active server; a name list exports
+        only those. exclude then subtracts from the granted set - it grants
+        nothing on its own. A server flagged "disabled": true is dormant
+        inventory and is never exported, even when named in include.
         """
         active = {
             k: v
@@ -343,14 +356,18 @@ class SyncEngine:
             if not (isinstance(v, dict) and v.get("disabled") is True)
         }
         if not isinstance(mcp_conf, dict):
-            return active
+            return {}
         include = mcp_conf.get("include")
-        if isinstance(include, list):
-            return {k: v for k, v in active.items() if k in include}
+        if not isinstance(include, list):
+            return {}
+        if "*" in include:
+            scoped = dict(active)
+        else:
+            scoped = {k: v for k, v in active.items() if k in include}
         exclude = mcp_conf.get("exclude") or []
         if isinstance(exclude, list) and exclude:
-            return {k: v for k, v in active.items() if k not in exclude}
-        return active
+            scoped = {k: v for k, v in scoped.items() if k not in exclude}
+        return scoped
 
     @staticmethod
     def _list_skill_names(skills_dir: Path) -> List[str]:

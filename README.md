@@ -304,22 +304,28 @@ push (drift protection, via the skills lockfile).
 
 #### Per-provider MCP scoping
 
-By default every provider receives the full unified MCP server set. Scope it
-in `~/.agents/config/config.json`:
+MCP export is **fail-closed**: a provider receives only the servers named in
+its `mcp.include` list, set in `~/.agents/config/config.json`. A provider
+with no `mcp` scope gets no servers at all, so the shared unified set can
+never flood a native file:
 
 ```json
 {
   "providers": {
     "cursor": { "mcp": { "include": ["github", "filesystem"] } },
-    "claude": { "mcp": { "exclude": ["internal-tools"] } }
+    "claude": { "mcp": { "include": ["*"], "exclude": ["internal-tools"] } }
   }
 }
 ```
 
-`include` is an allowlist (only those servers sync); `exclude` removes
-servers from the full set. Use this to keep credential-bearing MCP configs
-out of providers that don't need them. Servers marked `"disabled": true` in
-`mcp-config.json` are never exported, even when named in `include`.
+`include` is the grant: a name list exports only those servers, `["*"]`
+exports the whole active set. `exclude` then subtracts from the granted set
+
+- on its own it grants nothing. `ai-config migrate` seeds `mcp.include`
+  with the names the provider already had, so a migrated provider keeps its
+  own set and unified additions need an explicit opt-in. Sync warns when a
+  targeted provider has no `mcp` scope. Servers marked `"disabled": true` in
+  `mcp-config.json` are never exported, even when named in `include`.
 
 #### Per-provider skills scoping
 

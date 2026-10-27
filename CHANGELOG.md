@@ -50,6 +50,12 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- MCP export is now fail-closed: a provider receives only the servers named
+  in `providers.<name>.mcp.include` (`["*"]` for everything); no `mcp` scope
+  means no servers, and `exclude` alone grants nothing. `migrate` seeds the
+  include list from the servers the provider already had, and sync warns
+  when a targeted provider is unscoped. `--prune` with an explicit scope
+  mirrors even an empty grant.
 - Unified rules moved to `~/.agents/AGENTS.md`; `init` relocates a legacy
   `config/AGENTS.md` there, and `init --fresh` removes the master rules
   file as well

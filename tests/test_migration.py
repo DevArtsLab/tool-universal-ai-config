@@ -45,6 +45,45 @@ def test_migrate_dedupes_identical_server(sandbox, capsys):
     assert len(UnifiedConfig(AgentEnv()).load_mcp_servers()) == 1
 
 
+def test_migrate_seeds_mcp_include(sandbox):
+    """Migration seeds providers.<name>.mcp.include from the servers the
+    provider actually had, so a later sync keeps exactly that set."""
+    _write_cursor_mcp(sandbox, {"gh": {"command": "a"}, "fs": {"command": "b"}})
+
+    ProviderMigrator(AgentEnv()).migrate_provider("cursor")
+
+    conf = UnifiedConfig(AgentEnv()).load_unified(include_mcp=False)
+    assert conf["providers"]["cursor"]["mcp"]["include"] == ["fs", "gh"]
+
+
+def test_migrate_seed_uses_alias_names(sandbox):
+    """When the provider's server collides and lands under an alias, the
+    seeded include names the alias - the name the provider's variant
+    actually holds in the unified store."""
+    config = UnifiedConfig(AgentEnv())
+    config.add_mcp_server("gh", {"command": "other"})
+    _write_cursor_mcp(sandbox, {"gh": {"command": "mine"}})
+
+    ProviderMigrator(AgentEnv()).migrate_provider("cursor")
+
+    conf = UnifiedConfig(AgentEnv()).load_unified(include_mcp=False)
+    assert conf["providers"]["cursor"]["mcp"]["include"] == ["gh.cursor"]
+
+
+def test_migrate_does_not_clobber_mcp_scope(sandbox):
+    """A hand-set mcp scope survives a re-migration."""
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"mcp": {"include": ["only-this"]}}}
+    config.save_unified(unified)
+    _write_cursor_mcp(sandbox, {"gh": {"command": "a"}})
+
+    ProviderMigrator(AgentEnv()).migrate_provider("cursor")
+
+    conf = UnifiedConfig(AgentEnv()).load_unified(include_mcp=False)
+    assert conf["providers"]["cursor"]["mcp"]["include"] == ["only-this"]
+
+
 def test_migrate_conflict_keeps_both_under_alias(sandbox):
     config = UnifiedConfig(AgentEnv())
     config.add_mcp_server("gh", {"command": "original"})

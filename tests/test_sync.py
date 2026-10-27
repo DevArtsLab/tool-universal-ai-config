@@ -36,7 +36,13 @@ def sandbox(tmp_path, monkeypatch):
     config.save_unified(
         {
             "shared": {},
-            "providers": {"cursor": {"chat.fontSize": 14}},
+            # MCP export is fail-closed: tests that exercise write mechanics
+            # opt each provider in wholesale via "include": ["*"].
+            "providers": {
+                name: {"mcp": {"include": ["*"]}}
+                for name in ("cursor", "claude", "codex", "continue", "zed", "vscode")
+            }
+            | {"cursor": {"chat.fontSize": 14, "mcp": {"include": ["*"]}}},
             "skills": {"enabled": [], "paths": []},
         }
     )
@@ -169,10 +175,11 @@ def test_sync_mcp_scoping_include(sandbox):
 
 
 def test_sync_mcp_scoping_exclude(sandbox):
+    """exclude subtracts from the include grant."""
     (sandbox / ".cursor").mkdir()
     config = UnifiedConfig(AgentEnv())
     unified = config.load_unified(include_mcp=False)
-    unified["providers"] = {"cursor": {"mcp": {"exclude": ["other"]}}}
+    unified["providers"] = {"cursor": {"mcp": {"include": ["*"], "exclude": ["other"]}}}
     config.save_unified(unified)
     config.save_mcp_servers({"github": {"command": "a"}, "other": {"command": "b"}})
 
@@ -180,6 +187,48 @@ def test_sync_mcp_scoping_exclude(sandbox):
 
     mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
     assert set(mcp["mcpServers"]) == {"github"}
+
+
+def test_sync_mcp_unscoped_exports_nothing(sandbox):
+    """Fail-closed: a provider with no mcp scope gets no servers at all."""
+    (sandbox / ".cursor").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {}}
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    assert not (sandbox / ".cursor" / "mcp.json").exists()
+
+
+def test_sync_mcp_exclude_alone_grants_nothing(sandbox):
+    """exclude on its own grants nothing - only include exports."""
+    (sandbox / ".cursor").mkdir()
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"mcp": {"exclude": ["other"]}}}
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    assert not (sandbox / ".cursor" / "mcp.json").exists()
+
+
+def test_sync_mcp_empty_include_prune_wipes_servers(sandbox):
+    """include: [] grants nothing; --prune mirrors that onto the file."""
+    (sandbox / ".cursor").mkdir()
+    mcp_path = sandbox / ".cursor" / "mcp.json"
+    mcp_path.write_text(json.dumps({"mcpServers": {"stale": {"command": "old"}}}))
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {"cursor": {"mcp": {"include": []}}}
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"], prune=True)
+
+    mcp = json.loads(mcp_path.read_text())
+    assert mcp["mcpServers"] == {}
 
 
 def test_sync_skips_disabled_servers(sandbox):
@@ -553,7 +602,7 @@ def test_bare_sync_writes_opted_in_providers(sandbox):
     (sandbox / ".codex").mkdir()
     config = UnifiedConfig(AgentEnv())
     unified = config.load_unified(include_mcp=False)
-    unified["providers"] = {"cursor": {"sync": True}}
+    unified["providers"] = {"cursor": {"sync": True, "mcp": {"include": ["*"]}}}
     config.save_unified(unified)
 
     SyncEngine(AgentEnv()).sync()

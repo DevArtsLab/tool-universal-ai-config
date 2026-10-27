@@ -172,6 +172,7 @@ class ProviderMigrator:
             mcp_sources.append((mcp_src, True))
 
         existing_servers = self.config.load_mcp_servers()
+        provider_server_names: List[str] = []
         for src, allow_root_level in mcp_sources:
             data = load_any_safe(src)
             servers = extract_mcp_servers(spec, data)
@@ -187,6 +188,7 @@ class ProviderMigrator:
                 match = self._find_equivalent(name, server_config, existing_servers)
                 if match and normalize_mcp_server(existing_servers[match]) == server_config:
                     print(f"  Skipping duplicate MCP server: {name}")
+                    provider_server_names.append(match)
                     continue
                 if match and self._is_name_conflict(name, match):
                     # Exact name collision with different config: find or mint
@@ -202,6 +204,7 @@ class ProviderMigrator:
                         n += 1
                     if alias in existing_servers:
                         print(f"  Skipping duplicate MCP server: {name} (as {alias})")
+                        provider_server_names.append(alias)
                         continue
                     print(
                         f"  MCP server '{name}' differs from existing "
@@ -217,7 +220,21 @@ class ProviderMigrator:
                     )
                 self.config.add_mcp_server(name, server_config)
                 existing_servers[name] = server_config
+                provider_server_names.append(name)
                 print(f"  Migrated MCP server from {src}: {name}")
+
+        # Seed providers.<name>.mcp.include with the names the provider
+        # actually had (post-dedupe/alias names). Sync export is fail-closed,
+        # so the provider keeps its own set and unified additions need
+        # explicit opt-in. A hand-set scope is never clobbered.
+        if provider_server_names:
+            prov_conf = (
+                self.config.load_unified(include_mcp=False).get("providers", {}).get(provider, {})
+            )
+            if not isinstance(prov_conf.get("mcp"), dict):
+                seeded = sorted(set(provider_server_names))
+                self.config.update_provider(provider, {"mcp": {"include": seeded}})
+                print(f"  Scoped providers.{provider}.mcp.include: {len(seeded)} server(s)")
 
         # Migrate skills directory
         self._migrate_skills(provider)
@@ -646,6 +663,15 @@ class ProviderMigrator:
 
                         save_json(project_mcp_unified, merged_mcp)
                         print(f"Migrated {provider} project MCP config to {project_mcp_unified}")
+
+                        # Seed project-level mcp scope the same way: the
+                        # provider keeps the servers its project file had.
+                        proj_conf_path = ai_dir / "config.json"
+                        proj_conf = load_json(proj_conf_path) if proj_conf_path.exists() else {}
+                        prov_scope = proj_conf.setdefault("providers", {}).setdefault(provider, {})
+                        if isinstance(prov_scope, dict) and "mcp" not in prov_scope:
+                            prov_scope["mcp"] = {"include": sorted(incoming)}
+                            save_json(proj_conf_path, proj_conf)
                 except ConfigError:
                     pass
 
