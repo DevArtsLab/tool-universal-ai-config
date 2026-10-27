@@ -6,7 +6,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-10-26
+## [0.3.0] - 2026-10-27
 
 ### Added
 
@@ -16,17 +16,54 @@ versions follow [Semantic Versioning](https://semver.org/).
 - Global `skills.enabled` list honored as a sync allowlist
 - `--prune` removes synced skills that left scope, tracked via a
   `.ai-config-skills` manifest so user skills are never deleted
-- Skill migration dedupes identical skills; conflicting same-name skills
-  are kept under a `<name>.<provider>` alias that never syncs back out
+- Symlink mode (default): `ai-config sync` links skill directories into
+  provider skills dirs so every provider shares one editable source;
+  `--copy` restores copy mode. Provider rules files that hold only the
+  unified `AGENTS.md` content are linked the same way
+- Skills lockfile `.ai-config-lock.json` next to each skills root: sha256
+  content hashes, `createdAt`/`updatedAt` seeded from file mtimes,
+  `origin` provenance (`imported:<provider>`, or `github:<source>` for
+  skills the npm `skills` CLI installed via its sibling
+  `.skill-lock.json`), and per-provider receipts of the last pushed hash.
+  Entries drop for skills deleted from disk
+- `ai-config status` reports per-provider skill state (in sync, stale,
+  drifted, missing) from lockfile receipts and live hashes, plus recorded
+  conflicts
+- Skill conflict quarantine: a same-name skill with different content
+  parks under `skill-conflicts/<name>/<provider>/` (sibling of the skills
+  dir) instead of an in-store `<name>.<provider>` alias. On a TTY,
+  `migrate` prompts keep / replace / skip; resolved conflicts drop from
+  the record once the parked copy is removed
+- `ai-config migrate --no-interactive` quarantines without prompting, and
+  `--reconcile-aliases` moves legacy `<name>.<provider>` dirs into
+  `skill-conflicts/`
+- Sync drift protection: a managed provider copy whose live hash differs
+  from the recorded push (or predates recording) is backed up, never
+  silently overwritten
+- Migration subset detection: an incoming skill whose files are all
+  identical members of the existing skill is skipped, not conflicted
+- OS junk files (`.DS_Store`, `Thumbs.db`, `desktop.ini`, `._*`) are
+  ignored by skill hashing and equality so they cannot fabricate drift or
+  conflicts
 - `ai-config --version`
 - CI runs pytest, `black --check`, and `mypy` on every push and PR to main
 
 ### Changed
 
 - Unified rules moved to `~/.agents/AGENTS.md`; `init` relocates a legacy
-  `config/AGENTS.md` there
+  `config/AGENTS.md` there, and `init --fresh` removes the master rules
+  file as well
+- Rules migration no longer appends provider text into a populated
+  unified `AGENTS.md` - divergence is reported for manual merge, since
+  appending is how duplicated lines accumulated
+- Windsurf skills sync target is `~/.codeium/windsurf/skills/`; both
+  Codeium-era and `~/.windsurf/` skills dirs are still scanned on read
 
 ### Fixed
+
+- Conflicting skills can no longer land inside the skills store as
+  `<name>.<provider>` dirs that could never load - the skill rule
+  requires the folder name to equal the SKILL.md `name:`
 
 - Nested `BEGIN/END ai-config managed` blocks are flattened correctly,
   including text stranded between inner and outer END markers

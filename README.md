@@ -10,6 +10,9 @@ A unified configuration system for AI agents across multiple providers (Devin, W
 - **Sync**: Writes unified config back to each provider's native files (`ai-config sync`)
 - **Project-Local**: Per-project configuration with `.ai/` directory
 - **Shared Resources**: MCP servers and skills shared across providers
+- **Drift Detection**: Skills lockfile tracks pushed content hashes, so
+  locally edited or stale provider copies surface in `status` and are
+  backed up rather than overwritten
 - **Provider Overrides**: Provider-specific settings when needed
 
 ## Supported Providers
@@ -35,7 +38,7 @@ Legacy paths are covered too: the Windsurf line spans Codeium-era
 (`~/.codeium/`) through current `~/.windsurf/` locations, and Devin detection
 covers both `~/.config/devin/` (active config) and `~/.devin/` (application
 data). Migration reads every known path; sync writes to the provider's
-current master location.
+current master location (Windsurf skills: `~/.codeium/windsurf/skills/`).
 
 ## Installation
 
@@ -122,6 +125,8 @@ ai-config migrate --project
 ```
 ~/.agents/                  # All agent data in one place
   ├── AGENTS.md           # Shared rules (global)
+  ├── .ai-config-lock.json # Skills lockfile: hashes, origins, sync receipts
+  ├── skill-conflicts/    # Quarantined same-name skills pending resolution
   ├── config/
   │   ├── config.json     # Unified config (all providers read this)
   │   └── mcp-config.json # MCP servers
@@ -215,7 +220,13 @@ Migrate existing provider configurations.
 ai-config migrate              # Migrate all detected providers
 ai-config migrate devin        # Migrate specific provider
 ai-config migrate --project    # Migrate project configs
+ai-config migrate --no-interactive     # Quarantine skill conflicts without prompting
+ai-config migrate --reconcile-aliases  # Move legacy <name>.<provider> dirs to skill-conflicts/
 ```
+
+On a TTY, `migrate` asks how to resolve each same-name skill conflict
+(keep / replace / skip); otherwise the incoming copy is quarantined under
+`skill-conflicts/<name>/<provider>/` next to the skills dir.
 
 ### `ai-config validate`
 
@@ -227,7 +238,9 @@ ai-config validate
 
 ### `ai-config status`
 
-Show current configuration status.
+Show current configuration status. When a skills lockfile exists, also
+reports per-provider skill state (in sync, stale, drifted, missing) and
+any recorded conflicts.
 
 ```bash
 ai-config status
@@ -249,7 +262,7 @@ Get configuration for a specific provider.
 ai-config get-config devin
 ```
 
-### `ai-config sync [--provider NAME] [--project] [--all] [--prune] [--dry-run]`
+### `ai-config sync [--provider NAME] [--project] [--all] [--prune] [--copy] [--dry-run]`
 
 Write the unified config back to each provider's native files: MCP servers
 (translated to each provider's format: `mcpServers`, `servers`,
@@ -264,7 +277,14 @@ ai-config sync --provider cursor   # one provider, explicit
 ai-config sync --all          # every known provider, explicit
 ai-config sync --project      # project-level targets (.cursor/, .vscode/, ...)
 ai-config sync --prune        # also remove MCP servers no longer in scope
+ai-config sync --copy         # copy skills/rules instead of symlinking
 ```
+
+Skills sync defaults to **symlinks**: each provider's skills dir links to
+the unified copy, so a skill edited in any provider edits the single
+source. A provider rules file that holds only the unified `AGENTS.md`
+content is linked the same way. Pass `--copy` for plain copies, or when a
+provider cannot follow symlinks.
 
 Bare `ai-config sync` only writes to providers that opted in via
 `"providers.<name>.sync": true`. Providers can also read the unified config
@@ -276,7 +296,9 @@ provider's MCP list an exact mirror of its scoped unified set and to remove
 synced skills that left scope; pruned MCP files are backed up with a
 `.backup` suffix first, and skills outside the `.ai-config-skills` manifest
 are left untouched. A skill name already claimed by a user-managed dir or
-file is preserved under `.ai-config-backups/` in that skills dir.
+file is preserved under `.ai-config-backups/` in that skills dir - and so
+is a managed copy whose contents were edited locally since the recorded
+push (drift protection, via the skills lockfile).
 
 #### Per-provider MCP scoping
 
@@ -299,12 +321,20 @@ out of providers that don't need them. Servers marked `"disabled": true` in
 
 #### Per-provider skills scoping
 
-Skills follow the same scoping rules. Whole skill directories are copied
+Skills follow the same scoping rules. Whole skill directories are synced
 (`SKILL.md` plus companion files like `references/` and `scripts/`), and
 synced names are recorded in a `.ai-config-skills` manifest inside each
 provider's skills dir. `--prune` removes only skills recorded in that
 manifest, so skills you placed in a provider dir yourself are never
 deleted.
+
+A skills lockfile (`.ai-config-lock.json` next to each skills root)
+tracks content hashes, `createdAt`/`updatedAt`, and provenance
+(`imported:<provider>` for migrated skills, `github:<source>` for skills
+installed by the npm `skills` CLI), plus a receipt of the hash last pushed
+to each provider. That lets `ai-config status` distinguish a stale copy
+from one drifted by local edits, and lets sync back drifted copies up
+instead of overwriting them.
 
 ```json
 {
@@ -323,8 +353,12 @@ provider out of skill sync entirely - useful when a provider already reads
 another location (e.g. Devin scanning `~/.claude/skills`), which would
 otherwise list every skill twice.
 
-Migration aliases (`<name>.<provider>`, e.g. `my-skill.cursor`) are
-local-only reconciliation copies and are never synced to any provider.
+Same-name skills with different content never land in the store as
+`<name>.<provider>` aliases - a folder name that differs from the
+SKILL.md `name:` frontmatter cannot load as a skill. Migration quarantines
+conflicts under `skill-conflicts/<name>/<provider>/` and records them in
+the lockfile; `ai-config migrate --reconcile-aliases` retires aliases left
+behind by older versions.
 
 Rules synced into shared files (like a project `AGENTS.md`) are wrapped in
 `<!-- BEGIN ai-config managed -->` markers so repeated syncs update in place
@@ -367,11 +401,14 @@ supported.
 MCP servers are deduplicated on import: identical entries merge, and a
 same-name server with a different config is kept under a `<name>.<provider>`
 alias (e.g. `github.cursor`) rather than silently overwriting the existing
-one. Skills get the same treatment: identical skills are skipped, a
-conflicting same-name skill lands under `<name>.<provider>`, and the whole
-skill directory (not just `SKILL.md`) is copied. Rules imports strip managed
-blocks and dedupe previously migrated chunks, so re-running `migrate` never
-grows the unified `AGENTS.md`.
+one. Skills are deduplicated too: identical skills - and incoming copies
+whose files are all identical subsets of the existing skill - are skipped,
+while a conflicting same-name skill is quarantined under
+`skill-conflicts/<name>/<provider>/` (prompting keep / replace / skip on a
+TTY). The whole skill directory, not just `SKILL.md`, is imported. Rules
+imports strip managed blocks and dedupe previously migrated chunks; once
+the unified `AGENTS.md` holds content it is the master copy, so divergent
+provider rules are reported for manual merge instead of appended.
 
 Legacy configs are backed up with `.backup` extension.
 
