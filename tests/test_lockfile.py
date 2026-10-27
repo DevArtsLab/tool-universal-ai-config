@@ -128,9 +128,11 @@ def test_sync_backs_up_drifted_managed_copy(sandbox):
     engine = SyncEngine(env)
     engine.sync(providers=["cursor"])
 
-    # Local edit inside the provider copy, then bump the source so the
-    # copy no longer compares equal to src.
+    # Drift under link mode: replace the managed symlink with a real dir
+    # holding local edits, then bump the source.
     target = sandbox / ".cursor" / "skills" / "demo-skill"
+    target.unlink()
+    target.mkdir()
     (target / "SKILL.md").write_text("# Locally edited\n")
     (env.skills / "demo-skill" / "SKILL.md").write_text("# Demo v2\n")
 

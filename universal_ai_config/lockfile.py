@@ -162,8 +162,8 @@ class SkillsLock:
     @staticmethod
     def _npm_lock_origins(path: Path) -> Dict[str, str]:
         """Map of skill name -> 'github:<source>' from a sibling npm
-        skills-CLI lockfile. Repo-installed skills (e.g. devartslab skills
-        pulled by projects via 'npx skills add') keep their provenance."""
+        skills-CLI lockfile, if one exists. The npm CLI is optional - this
+        only reads a lockfile it happens to have written, for provenance."""
         try:
             data = json.loads(path.read_text())
         except (OSError, json.JSONDecodeError):

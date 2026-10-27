@@ -137,6 +137,7 @@ class SyncEngine:
         all_providers: bool = False,
         prune: bool = False,
         dry_run: bool = False,
+        link_skills: bool = True,
     ) -> SyncResult:
         result = SyncResult()
 
@@ -199,6 +200,7 @@ class SyncEngine:
                 prune,
                 dry_run,
                 lock,
+                link_skills,
             )
 
         if lock and skills_dir.exists() and not dry_run:
@@ -224,6 +226,7 @@ class SyncEngine:
         prune: bool,
         dry_run: bool,
         lock: Optional[SkillsLock] = None,
+        link_skills: bool = True,
     ) -> None:
         # Config file: merge provider-specific settings into native config.
         # Unified-namespace keys never belong in a native config file.
@@ -270,7 +273,15 @@ class SyncEngine:
             names = self._scoped_skill_names(settings.get("skills"), skills_conf, skills_dir)
             if target_dir and names is not None:
                 self._write_skills(
-                    skills_dir, target_dir, spec.name, names, result, prune, dry_run, lock
+                    skills_dir,
+                    target_dir,
+                    spec.name,
+                    names,
+                    result,
+                    prune,
+                    dry_run,
+                    lock,
+                    link_skills,
                 )
 
     def _resolve(self, path_str: Optional[str], base: Optional[Path]) -> Optional[Path]:
@@ -445,13 +456,15 @@ class SyncEngine:
         prune: bool,
         dry_run: bool,
         lock: Optional[SkillsLock] = None,
+        link: bool = True,
     ) -> None:
-        """Copy whole skill directories (SKILL.md plus companion files) to the
-        provider. A manifest file records what ai-config wrote so --prune can
-        remove stale managed skills without touching user-managed ones. The
-        central lockfile records the pushed content hash per provider, so a
-        later sync can tell a locally edited copy (drift) from an outdated
-        push and back it up instead of deleting it silently."""
+        """Link whole skill directories (SKILL.md plus companion files) into
+        the provider, or copy them when link is False. A manifest file records
+        what ai-config wrote so --prune can remove stale managed skills
+        without touching user-managed ones. The central lockfile records the
+        pushed content hash per provider, so a later sync can tell a locally
+        edited copy (drift) from an outdated push and back it up instead of
+        deleting it silently."""
         manifest_path = dst_dir / SKILLS_MANIFEST
         managed = set(manifest_path.read_text().split()) if manifest_path.is_file() else set()
         keep = set(names)
@@ -490,7 +503,11 @@ class SyncEngine:
                     backup.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(target), str(backup))
                     result.add(provider, "skills", backup, "written", f"backed up {name}")
-            shutil.copytree(src, target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if link:
+                target.symlink_to(src.resolve(), target_is_directory=True)
+            else:
+                shutil.copytree(src, target)
             result.add(provider, "skills", target, "written", name)
             managed.add(name)
             if lock:

@@ -423,7 +423,8 @@ def test_sync_skills_without_prune_keeps_stale(sandbox):
 
     SyncEngine(env).sync(providers=["cursor"])
 
-    assert (sandbox / ".cursor" / "skills" / "demo-skill").exists()
+    # The link object survives without prune even though its target is gone.
+    assert (sandbox / ".cursor" / "skills" / "demo-skill").is_symlink()
 
 
 def test_sync_skills_preserves_unmanaged_collision(sandbox):
@@ -448,11 +449,15 @@ def test_sync_skills_preserves_unmanaged_collision(sandbox):
 
 
 def test_sync_skills_replaces_managed_dir(sandbox):
-    """A managed dir edited in place drifts from the recorded push: it is
-    backed up rather than silently deleted, then replaced wholesale."""
+    """A managed link replaced by a real dir holding local edits drifts from
+    the recorded push: it is backed up rather than silently deleted, then
+    relinked wholesale."""
     env = AgentEnv()
     SyncEngine(env).sync(providers=["cursor"])
     target = sandbox / ".cursor" / "skills" / "demo-skill"
+    target.unlink()
+    target.mkdir()
+    (target / "SKILL.md").write_text("# Demo\n")
     (target / "user-added.md").write_text("mine\n")
 
     SyncEngine(env).sync(providers=["cursor"])
@@ -480,7 +485,7 @@ def test_sync_skills_unlinks_file_at_managed_path(sandbox):
     env = AgentEnv()
     SyncEngine(env).sync(providers=["cursor"])
     skills = sandbox / ".cursor" / "skills"
-    shutil.rmtree(skills / "demo-skill")
+    (skills / "demo-skill").unlink()
     (skills / "demo-skill").write_text("stray\n")
 
     SyncEngine(env).sync(providers=["cursor"])
@@ -555,3 +560,44 @@ def test_bare_sync_writes_opted_in_providers(sandbox):
 
     assert (sandbox / ".cursor" / "mcp.json").exists()
     assert not (sandbox / ".codex" / "config.toml").exists()
+
+
+def test_sync_skills_symlinks_by_default(sandbox):
+    """User-scope sync links provider skills to the unified source."""
+    (sandbox / ".cursor").mkdir()
+    env = AgentEnv()
+    SyncEngine(env).sync(providers=["cursor"])
+
+    target = sandbox / ".cursor" / "skills" / "demo-skill"
+    assert target.is_symlink()
+    assert target.resolve() == (env.skills / "demo-skill").resolve()
+    assert (target / "SKILL.md").read_text() == "# Demo\n"
+
+
+def test_sync_skills_copy_mode_writes_real_dirs(sandbox):
+    """--copy fallback: real dir, not a link."""
+    (sandbox / ".cursor").mkdir()
+    env = AgentEnv()
+    SyncEngine(env).sync(providers=["cursor"], link_skills=False)
+
+    target = sandbox / ".cursor" / "skills" / "demo-skill"
+    assert target.is_dir() and not target.is_symlink()
+    assert (target / "SKILL.md").read_text() == "# Demo\n"
+
+
+def test_sync_skills_relinks_drifted_real_dir(sandbox):
+    """A real dir at the managed path (no recorded drift) that matches source
+    is simply relinked; a divergent one is backed up first."""
+    (sandbox / ".cursor").mkdir()
+    env = AgentEnv()
+    skills = sandbox / ".cursor" / "skills"
+    (skills / "demo-skill" / "references").mkdir(parents=True)
+    (skills / "demo-skill" / "SKILL.md").write_text("# My own version\n")
+
+    SyncEngine(env).sync(providers=["cursor"])
+
+    target = skills / "demo-skill"
+    assert target.is_symlink()
+    assert (skills / SKILLS_BACKUP_DIR / "demo-skill" / "SKILL.md").read_text() == (
+        "# My own version\n"
+    )
