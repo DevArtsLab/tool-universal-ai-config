@@ -86,6 +86,24 @@ def test_lock_round_trip(tmp_path):
     assert reloaded.provider_hash("cursor", "skill-a") is None
 
 
+def test_lock_prunes_gone_conflicts(tmp_path):
+    lock = SkillsLock(tmp_path)
+    parked = tmp_path / "skill-conflicts" / "x" / "claude"
+    parked.mkdir(parents=True)
+    lock.record_conflict("x", "claude", str(parked), "kept-existing")
+    lock.record_conflict("y", "cursor", str(tmp_path / "gone"), "kept-existing")
+    lock.record_conflict("z", "devin", None, "skipped")
+
+    assert lock.prune_conflicts() == 1
+    assert list(lock.data["conflicts"]) == ["x", "z"]
+
+    parked.rmdir()
+    (tmp_path / "skill-conflicts" / "x").rmdir()
+    (tmp_path / "skill-conflicts").rmdir()
+    assert lock.prune_conflicts() == 1
+    assert list(lock.data["conflicts"]) == ["z"]
+
+
 def test_sync_writes_lock(sandbox):
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()

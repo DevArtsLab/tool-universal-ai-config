@@ -128,3 +128,22 @@ class SkillsLock:
         if quarantined_to:
             entry["quarantinedTo"] = quarantined_to
         self.data["conflicts"].setdefault(name, []).append(entry)
+
+    def prune_conflicts(self) -> int:
+        """Drop conflict entries whose quarantinedTo path no longer exists -
+        the parked copy is gone, so the conflict is resolved by deletion.
+        Entries with no recorded path (skipped) stay until handled another
+        way. Returns entries removed."""
+        removed = 0
+        for name in list(self.data["conflicts"]):
+            kept = [
+                e
+                for e in self.data["conflicts"][name]
+                if not e.get("quarantinedTo") or Path(e["quarantinedTo"]).exists()
+            ]
+            removed += len(self.data["conflicts"][name]) - len(kept)
+            if kept:
+                self.data["conflicts"][name] = kept
+            else:
+                del self.data["conflicts"][name]
+        return removed

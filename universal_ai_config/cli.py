@@ -259,6 +259,9 @@ class CLI:
         if not lock_path.is_file():
             return
         lock = SkillsLock(self.env.base)
+        pruned = lock.prune_conflicts()
+        if pruned:
+            lock.save()
         skills = lock.data.get("skills", {})
         providers = lock.data.get("providers", {})
         print(f"\nSkills lock: {len(skills)} tracked ({lock_path})")
