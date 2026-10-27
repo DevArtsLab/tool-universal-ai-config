@@ -151,6 +151,12 @@ class SkillsLock:
                 if isinstance(entry, dict) and str(entry.get("origin", "")).startswith("github:"):
                     del entry["origin"]
                     changed = True
+        # Drop entries for skills whose dirs vanished (renames, removals) -
+        # the lock records what is on disk, not what once was.
+        for name in list(self.data["skills"]):
+            if not (skills_dir / name / "SKILL.md").is_file():
+                del self.data["skills"][name]
+                changed = True
         return changed
 
     @staticmethod
