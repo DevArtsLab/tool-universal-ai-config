@@ -312,7 +312,8 @@ def test_migrate_rules_dedupes_migrated_chunks(sandbox):
 
 
 def test_migrate_rules_strips_managed_blocks_on_reimport(sandbox):
-    """Rules synced out and re-imported never re-enter the unified store."""
+    """An existing unified rules file is the master: provider content,
+    managed or not, is never appended into it."""
     from universal_ai_config.sync import BLOCK_BEGIN, BLOCK_END
 
     env = AgentEnv()
@@ -326,8 +327,7 @@ def test_migrate_rules_strips_managed_blocks_on_reimport(sandbox):
     ProviderMigrator(env).migrate_provider("claude")
 
     unified = (env.rules).read_text()
-    assert unified.count("Be nice.") == 1
-    assert "# Custom" in unified
+    assert unified == rules
     assert BLOCK_BEGIN not in unified
 
 
@@ -344,9 +344,9 @@ def test_migrate_skills_ignores_nested_skill_md(sandbox):
 
 
 def test_migrate_rules_keeps_substring_chunk(sandbox):
-    """A distinct chunk that is a substring of an earlier chunk is kept."""
+    """A distinct chunk that is a substring of an earlier chunk is kept when
+    seeding a missing unified rules file."""
     env = AgentEnv()
-    (env.rules).write_text("# Unified\n")
     claude = sandbox / ".claude"
     (claude / "skills").mkdir(parents=True)  # marks provider as present
     # "- Be nice." is a substring of "- Be nice. Always." but is new content.

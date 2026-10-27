@@ -138,6 +138,7 @@ class SyncEngine:
         prune: bool = False,
         dry_run: bool = False,
         link_skills: bool = True,
+        link_rules: bool = True,
     ) -> SyncResult:
         result = SyncResult()
 
@@ -201,6 +202,7 @@ class SyncEngine:
                 dry_run,
                 lock,
                 link_skills,
+                link_rules,
             )
 
         if lock and skills_dir.exists() and not dry_run:
@@ -227,6 +229,7 @@ class SyncEngine:
         dry_run: bool,
         lock: Optional[SkillsLock] = None,
         link_skills: bool = True,
+        link_rules: bool = True,
     ) -> None:
         # Config file: merge provider-specific settings into native config.
         # Unified-namespace keys never belong in a native config file.
@@ -264,7 +267,14 @@ class SyncEngine:
             rules_path = self._resolve(scope.rules_path, base)
             if rules_path:
                 self._write_rules(
-                    rules_path, rules_text, scope.rules_mode, spec.name, result, dry_run
+                    rules_path,
+                    rules_text,
+                    scope.rules_mode,
+                    spec.name,
+                    result,
+                    dry_run,
+                    link_source=self.env.rules if not base else None,
+                    link=link_rules,
                 )
 
         # Skills
@@ -412,12 +422,48 @@ class SyncEngine:
             result.add(provider, kind, path, "error", str(e))
 
     def _write_rules(
-        self, path: Path, content: str, mode: str, provider: str, result: SyncResult, dry_run: bool
+        self,
+        path: Path,
+        content: str,
+        mode: str,
+        provider: str,
+        result: SyncResult,
+        dry_run: bool,
+        link_source: Optional[Path] = None,
+        link: bool = True,
     ) -> None:
         # The exported text must never carry managed-block markers: a unified
         # rules file that acquired them through a buggy import would otherwise
         # nest blocks inside the block on every sync.
         content = strip_managed_markers(content)
+
+        # Symlink mode: when the rules to export are exactly the unified
+        # source file (user scope, no project merge), link the provider file
+        # to it instead of embedding a copy. A file with unmanaged content
+        # falls back to the managed block so nothing local is hidden.
+        if link and mode == "file" and link_source is not None:
+            src = Path(link_source)
+            try:
+                linkable = content.strip() == src.read_text().strip()
+            except OSError:
+                linkable = False
+            if linkable:
+                if path.is_symlink() and path.resolve() == src.resolve():
+                    result.add(provider, "rules", path, "skipped", "unchanged")
+                    return
+                unmanaged = ""
+                if path.exists() and not path.is_symlink():
+                    unmanaged = strip_managed_markers(path.read_text(errors="replace")).strip()
+                if not unmanaged:
+                    if dry_run:
+                        result.add(provider, "rules", path, "planned", "would link")
+                        return
+                    self._remove_path(path)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.symlink_to(src.resolve())
+                    result.add(provider, "rules", path, "written", "linked")
+                    return
+
         if mode in ("mdc_dir", "md_dir"):
             path = path / ("ai-config.mdc" if mode == "mdc_dir" else "ai-config.md")
             if mode == "mdc_dir":

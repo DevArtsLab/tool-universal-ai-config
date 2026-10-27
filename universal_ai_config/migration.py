@@ -484,13 +484,16 @@ class ProviderMigrator:
                 print(f"  Migrated rules to: {unified_rules}")
             return
 
+        # Unified already has content: it is the master copy. Appending more
+        # provider text here is how the file grew duplicates, so divergence is
+        # reported for manual merge instead of written.
         if not additional:
             print(f"  Rules already up to date: {legacy_rules}")
             return
-        unified_rules.write_text(
-            f"{existing.rstrip()}\n\n<!-- Migrated from {provider} -->\n{additional}\n"
+        print(
+            f"  Rules differ in {legacy_rules}; unified AGENTS.md is master "
+            "(skipped - merge manually if needed)"
         )
-        print(f"  Appended rules from: {legacy_rules}")
 
     @staticmethod
     def _normalize_rules(text: str) -> str:

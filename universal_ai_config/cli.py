@@ -422,6 +422,7 @@ class CLI:
             prune=prune,
             dry_run=dry_run,
             link_skills=not copy_skills,
+            link_rules=not copy_skills,
         )
 
         if not result.actions:
@@ -545,8 +546,8 @@ def main():
         "--copy",
         dest="copy_skills",
         action="store_true",
-        help="Copy skills instead of symlinking to the unified store "
-        "(default: symlink, so providers share one source)",
+        help="Copy skills and rules instead of symlinking to the unified "
+        "store (default: symlink, so providers share one source)",
     )
 
     args = parser.parse_args()

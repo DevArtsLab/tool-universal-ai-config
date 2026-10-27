@@ -601,3 +601,43 @@ def test_sync_skills_relinks_drifted_real_dir(sandbox):
     assert (skills / SKILLS_BACKUP_DIR / "demo-skill" / "SKILL.md").read_text() == (
         "# My own version\n"
     )
+
+
+def test_sync_rules_links_user_rules_file(sandbox):
+    """file-mode providers get a symlink to the unified rules file."""
+    (sandbox / ".claude").mkdir()
+    env = AgentEnv()
+    (env.rules).write_text("# Rules\n\n- Be nice.\n")
+    SyncEngine(env).sync(providers=["claude"])
+
+    target = sandbox / ".claude" / "CLAUDE.md"
+    assert target.is_symlink()
+    assert target.resolve() == env.rules.resolve()
+
+
+def test_sync_rules_unmanaged_content_keeps_managed_block(sandbox):
+    """A rules file with unmanaged content gets the managed block, not a link."""
+    claude = sandbox / ".claude"
+    claude.mkdir()
+    (claude / "CLAUDE.md").write_text("# My own notes\n")
+    env = AgentEnv()
+    (env.rules).write_text("# Rules\n\n- Be nice.\n")
+    SyncEngine(env).sync(providers=["claude"])
+
+    target = claude / "CLAUDE.md"
+    assert not target.is_symlink()
+    text = target.read_text()
+    assert "My own notes" in text
+    assert "Be nice." in text
+
+
+def test_sync_rules_copy_mode_writes_managed_block(sandbox):
+    """--copy disables linking: managed block written even when file is clean."""
+    (sandbox / ".claude").mkdir()
+    env = AgentEnv()
+    (env.rules).write_text("# Rules\n\n- Be nice.\n")
+    SyncEngine(env).sync(providers=["claude"], link_rules=False)
+
+    target = sandbox / ".claude" / "CLAUDE.md"
+    assert not target.is_symlink()
+    assert "Be nice." in target.read_text()
