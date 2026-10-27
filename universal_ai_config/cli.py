@@ -10,7 +10,9 @@ from typing import Dict, Optional
 from . import __version__
 from .environment import AgentEnv, find_project_root
 from .config import UnifiedConfig, ConfigError
+from .lockfile import LOCK_NAME, SkillsLock, dir_hash
 from .migration import ProviderMigrator, MigrationError
+from .providers import PROVIDERS, expand
 from .sync import SyncEngine
 
 
@@ -222,6 +224,8 @@ class CLI:
             print(f"\n✗ Unified config not found")
             print(f"Run 'ai-config init' to create it")
 
+        self._print_skills_lock()
+
         # Project status
         project_root = find_project_root()
         if project_root:
@@ -234,6 +238,52 @@ class CLI:
                 print(f"  Run 'ai-config init-project' to create it")
         else:
             print(f"\nNot in a project directory")
+
+    def _print_skills_lock(self) -> None:
+        """Summarize the skills lockfile: source freshness plus per-provider
+        sync state (in sync / stale / drifted / missing) for recorded pushes."""
+        lock_path = self.env.base / LOCK_NAME
+        if not lock_path.is_file():
+            return
+        lock = SkillsLock(self.env.base)
+        skills = lock.data.get("skills", {})
+        providers = lock.data.get("providers", {})
+        print(f"\nSkills lock: {len(skills)} tracked ({lock_path})")
+
+        # Per-provider state for each recorded push. Live-hashes the provider
+        # copy so locally edited skills surface as drifted.
+        for prov_name, prov_data in sorted(providers.items()):
+            receipts = prov_data.get("skills", {})
+            if not receipts:
+                continue
+            spec = PROVIDERS.get(prov_name)
+            skills_dir = expand(spec.user.skills_dir) if spec and spec.user.skills_dir else None
+            counts = {"in sync": 0, "stale": 0, "drifted": 0, "missing": 0}
+            flagged = []
+            for name, receipt in sorted(receipts.items()):
+                pushed = receipt.get("hash")
+                # Live-hash the unified copy: the recorded source hash only
+                # refreshes on sync, so it cannot flag "stale" on its own.
+                unified_dir = self.env.skills / name
+                source = dir_hash(unified_dir) if unified_dir.is_dir() else None
+                target = (skills_dir / name) if skills_dir else None
+                if target is None or not target.is_dir():
+                    state = "missing"
+                else:
+                    live = dir_hash(target)
+                    if live != pushed:
+                        state = "drifted"
+                    elif source is not None and pushed != source:
+                        state = "stale"
+                    else:
+                        state = "in sync"
+                counts[state] += 1
+                if state != "in sync":
+                    flagged.append(f"{name} ({state})")
+            summary = ", ".join(f"{v} {k}" for k, v in counts.items() if v)
+            print(f"  {prov_name}: {summary}")
+            for item in flagged:
+                print(f"    - {item}")
 
     def init_project(self) -> None:
         """Initialize .ai/ directory in current project."""

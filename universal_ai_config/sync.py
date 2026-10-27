@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional
 from .config import UnifiedConfig, deep_merge
 from .environment import AgentEnv, find_project_root
 from .formats import load_any_safe, save_any, FormatError
+from .lockfile import SkillsLock, dir_hash
 from .providers import PROVIDERS, ProviderSpec, SyncTargets, expand, render_mcp_servers
 
 BLOCK_BEGIN = "<!-- BEGIN ai-config managed -->"
@@ -177,6 +178,7 @@ class SyncEngine:
                 )
         rules_text = self._read_rules(project_root)
         skills_dir = (project_root / ".ai" / "skills") if project_root else self.env.skills
+        lock = SkillsLock(skills_dir.parent) if skills_dir else None
 
         for name in targets:
             spec = PROVIDERS[name]
@@ -195,7 +197,17 @@ class SyncEngine:
                 result,
                 prune,
                 dry_run,
+                lock,
             )
+
+        if lock and skills_dir.exists() and not dry_run:
+            # Refresh unified-store facts for every skill, synced or not, so
+            # createdAt/updatedAt track content changes without metadata
+            # comments inside SKILL.md files.
+            for skill_dir in sorted(skills_dir.glob("*/")):
+                if (skill_dir / "SKILL.md").is_file():
+                    lock.record_source(skill_dir.name, dir_hash(skill_dir))
+            lock.save()
 
         return result
 
@@ -212,6 +224,7 @@ class SyncEngine:
         result: SyncResult,
         prune: bool,
         dry_run: bool,
+        lock: Optional[SkillsLock] = None,
     ) -> None:
         # Config file: merge provider-specific settings into native config.
         # Unified-namespace keys never belong in a native config file.
@@ -257,7 +270,9 @@ class SyncEngine:
             target_dir = self._resolve(scope.skills_dir, base)
             names = self._scoped_skill_names(settings.get("skills"), skills_conf, skills_dir)
             if target_dir and names is not None:
-                self._write_skills(skills_dir, target_dir, spec.name, names, result, prune, dry_run)
+                self._write_skills(
+                    skills_dir, target_dir, spec.name, names, result, prune, dry_run, lock
+                )
 
     def _resolve(self, path_str: Optional[str], base: Optional[Path]) -> Optional[Path]:
         if not path_str:
@@ -430,10 +445,14 @@ class SyncEngine:
         result: SyncResult,
         prune: bool,
         dry_run: bool,
+        lock: Optional[SkillsLock] = None,
     ) -> None:
         """Copy whole skill directories (SKILL.md plus companion files) to the
         provider. A manifest file records what ai-config wrote so --prune can
-        remove stale managed skills without touching user-managed ones."""
+        remove stale managed skills without touching user-managed ones. The
+        central lockfile records the pushed content hash per provider, so a
+        later sync can tell a locally edited copy (drift) from an outdated
+        push and back it up instead of deleting it silently."""
         manifest_path = dst_dir / SKILLS_MANIFEST
         managed = set(manifest_path.read_text().split()) if manifest_path.is_file() else set()
         keep = set(names)
@@ -444,18 +463,30 @@ class SyncEngine:
         for name in names:
             src = src_dir / name
             target = dst_dir / name
+            src_hash = dir_hash(src)
             if dirs_equal(src, target):
                 managed.add(name)
+                if lock and not dry_run:
+                    lock.record_sync(provider, name, src_hash)
                 continue
             if dry_run:
                 result.add(provider, "skills", target, "planned", f"would copy {name}")
                 managed.add(name)
                 continue
             if target.is_symlink() or target.exists():
-                if name in managed:
+                last_pushed = lock.provider_hash(provider, name) if lock else None
+                # Overwrite silently only when the target still holds exactly
+                # what we last pushed (or is a stray non-dir at a managed
+                # path, unlinked as before). A managed copy whose bytes
+                # differ from the recorded hash (or that predates lock
+                # recording) may have been edited in place: preserve it like
+                # an unmanaged copy.
+                if name in managed and (
+                    not target.is_dir()
+                    or (last_pushed is not None and dir_hash(target) == last_pushed)
+                ):
                     self._remove_path(target)
                 else:
-                    # Not recorded as ours: preserve it, never destroy it.
                     backup = self._backup_path(dst_dir, name)
                     backup.parent.mkdir(parents=True, exist_ok=True)
                     shutil.move(str(target), str(backup))
@@ -463,6 +494,8 @@ class SyncEngine:
             shutil.copytree(src, target)
             result.add(provider, "skills", target, "written", name)
             managed.add(name)
+            if lock:
+                lock.record_sync(provider, name, src_hash)
 
         stale = sorted(managed - keep)
         if prune:
@@ -473,6 +506,8 @@ class SyncEngine:
                     continue
                 self._remove_path(target)
                 result.add(provider, "skills", target, "written", f"removed {name}")
+                if lock:
+                    lock.forget_sync(provider, name)
             managed -= set(stale)
 
         if not dry_run:

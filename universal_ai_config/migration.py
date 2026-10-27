@@ -17,6 +17,7 @@ from .providers import (
     normalize_mcp_name,
     normalize_mcp_server,
 )
+from .lockfile import SkillsLock, dir_hash
 from .sync import dirs_equal, strip_managed_markers
 
 
@@ -242,16 +243,21 @@ class ProviderMigrator:
         companion files (references/, scripts/) survive the move."""
         target_root.mkdir(parents=True, exist_ok=True)
         migrated = 0
+        lock = SkillsLock(target_root.parent)
         # Depth-1 only: a SKILL.md nested inside a skill's own companion dirs
         # is part of that skill, not a separate top-level skill.
         for skill_file in sorted(src_dir.glob("*/SKILL.md")):
-            migrated += self._import_one_skill(skill_file.parent, target_root, provider)
+            migrated += self._import_one_skill(skill_file.parent, target_root, provider, lock)
         for skill_file in sorted(src_dir.glob("*.md")):
             if skill_file.name != "SKILL.md":
-                migrated += self._import_one_loose_skill(skill_file, target_root, provider)
+                migrated += self._import_one_loose_skill(skill_file, target_root, provider, lock)
+        if migrated:
+            lock.save()
         return migrated
 
-    def _import_one_skill(self, skill_dir: Path, target_root: Path, provider: str) -> int:
+    def _import_one_skill(
+        self, skill_dir: Path, target_root: Path, provider: str, lock: SkillsLock
+    ) -> int:
         name = skill_dir.name
         target = target_root / name
         if target.is_dir():
@@ -271,10 +277,13 @@ class ProviderMigrator:
             print(f"  Skill '{name}' differs from existing; kept as '{alias}'")
             target = target_root / alias
         shutil.copytree(skill_dir, target)
+        lock.record_source(target.name, dir_hash(target), origin=f"imported:{provider}")
         print(f"  Migrated skill: {target.name}")
         return 1
 
-    def _import_one_loose_skill(self, skill_file: Path, target_root: Path, provider: str) -> int:
+    def _import_one_loose_skill(
+        self, skill_file: Path, target_root: Path, provider: str, lock: SkillsLock
+    ) -> int:
         name = skill_file.stem
         target = target_root / name / "SKILL.md"
         if target.exists():
@@ -295,6 +304,9 @@ class ProviderMigrator:
             target = target_root / alias / "SKILL.md"
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(skill_file, target)
+        lock.record_source(
+            target.parent.name, dir_hash(target.parent), origin=f"imported:{provider}"
+        )
         print(f"  Migrated skill: {target.parent.name}")
         return 1
 

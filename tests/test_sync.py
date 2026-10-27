@@ -448,7 +448,8 @@ def test_sync_skills_preserves_unmanaged_collision(sandbox):
 
 
 def test_sync_skills_replaces_managed_dir(sandbox):
-    """A manifest-managed dir that drifted is replaced wholesale."""
+    """A managed dir edited in place drifts from the recorded push: it is
+    backed up rather than silently deleted, then replaced wholesale."""
     env = AgentEnv()
     SyncEngine(env).sync(providers=["cursor"])
     target = sandbox / ".cursor" / "skills" / "demo-skill"
@@ -457,7 +458,8 @@ def test_sync_skills_replaces_managed_dir(sandbox):
     SyncEngine(env).sync(providers=["cursor"])
 
     assert not (target / "user-added.md").exists()
-    assert not (sandbox / ".cursor" / "skills" / SKILLS_BACKUP_DIR).exists()
+    backup = sandbox / ".cursor" / "skills" / SKILLS_BACKUP_DIR / "demo-skill"
+    assert (backup / "user-added.md").read_text() == "mine\n"
 
 
 def test_sync_skills_backs_up_stray_file(sandbox):
