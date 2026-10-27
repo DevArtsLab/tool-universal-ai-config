@@ -165,17 +165,91 @@ def test_migrate_skills_dedupes_identical(sandbox, capsys):
     assert (env.skills / "my-skill" / "SKILL.md").read_text() == "# Skill\n"
 
 
-def test_migrate_skill_conflict_kept_under_alias(sandbox):
+def test_migrate_skill_conflict_quarantined(sandbox):
+    """A conflicting provider skill never becomes a '<name>.<provider>'
+    folder inside the store: folder name must match frontmatter name.
+    The incoming copy is copied to skill-conflicts/, provider keeps its
+    own, and the lock records the conflict."""
+    env = AgentEnv()
+    existing = env.skills / "my-skill"
+    existing.mkdir(parents=True)
+    (existing / "SKILL.md").write_text("---\nname: my-skill\n---\n# Original\n")
+    _write_claude_skill(sandbox, body="---\nname: my-skill\n---\n# Different\n")
+
+    ProviderMigrator(env, interactive=False).migrate_provider("claude")
+
+    assert not (env.skills / "my-skill.claude").exists()
+    assert (env.skills / "my-skill" / "SKILL.md").read_text().endswith("# Original\n")
+    held = env.base / "skill-conflicts" / "my-skill" / "claude" / "SKILL.md"
+    assert held.read_text().endswith("# Different\n")
+    # The provider's own copy is untouched.
+    assert (
+        (sandbox / ".claude" / "skills" / "my-skill" / "SKILL.md")
+        .read_text()
+        .endswith("# Different\n")
+    )
+    from universal_ai_config.lockfile import SkillsLock
+
+    lock = SkillsLock(env.base)
+    conflicts = lock.data["conflicts"]["my-skill"]
+    assert conflicts[-1]["resolution"] == "kept-existing"
+    assert conflicts[-1]["provider"] == "claude"
+
+
+def test_migrate_skill_conflict_replace(sandbox, monkeypatch):
+    """Interactive 'replace' quarantines the existing unified copy and
+    imports the provider copy under the real name."""
     env = AgentEnv()
     existing = env.skills / "my-skill"
     existing.mkdir(parents=True)
     (existing / "SKILL.md").write_text("# Original\n")
     _write_claude_skill(sandbox, body="# Different\n")
 
-    ProviderMigrator(env).migrate_provider("claude")
+    monkeypatch.setattr("builtins.input", lambda _: "r")
+    ProviderMigrator(env, interactive=True).migrate_provider("claude")
+
+    assert (env.skills / "my-skill" / "SKILL.md").read_text() == "# Different\n"
+    held = env.base / "skill-conflicts" / "my-skill" / "unified" / "SKILL.md"
+    assert held.read_text() == "# Original\n"
+
+
+def test_migrate_skill_conflict_skip(sandbox, monkeypatch):
+    """Interactive 'skip' imports nothing and quarantines nothing."""
+    env = AgentEnv()
+    existing = env.skills / "my-skill"
+    existing.mkdir(parents=True)
+    (existing / "SKILL.md").write_text("# Original\n")
+    _write_claude_skill(sandbox, body="# Different\n")
+
+    monkeypatch.setattr("builtins.input", lambda _: "s")
+    ProviderMigrator(env, interactive=True).migrate_provider("claude")
 
     assert (env.skills / "my-skill" / "SKILL.md").read_text() == "# Original\n"
-    assert (env.skills / "my-skill.claude" / "SKILL.md").read_text() == "# Different\n"
+    assert not (env.base / "skill-conflicts").exists()
+
+
+def test_reconcile_skill_aliases(sandbox):
+    """Legacy '<name>.<provider>' dirs move to skill-conflicts/ verbatim."""
+    env = AgentEnv()
+    base = env.skills / "my-skill"
+    base.mkdir(parents=True)
+    (base / "SKILL.md").write_text("---\nname: my-skill\n---\n# Unified\n")
+    for prov in ("claude", "cursor", "claude.2"):
+        d = env.skills / f"my-skill.{prov}"
+        d.mkdir()
+        (d / "SKILL.md").write_text(f"---\nname: my-skill\n---\n# {prov}\n")
+
+    moved = ProviderMigrator(env, interactive=False).reconcile_skill_aliases(env.skills)
+
+    assert moved == 3
+    assert [x.name for x in env.skills.iterdir() if x.is_dir()] == ["my-skill"]
+    assert (
+        (env.base / "skill-conflicts" / "my-skill" / "claude" / "SKILL.md")
+        .read_text()
+        .endswith("# claude\n")
+    )
+    assert (env.base / "skill-conflicts" / "my-skill" / "cursor" / "SKILL.md").exists()
+    assert (env.base / "skill-conflicts" / "my-skill" / "claude.2" / "SKILL.md").exists()
 
 
 def test_migrate_skill_copies_companion_files(sandbox):

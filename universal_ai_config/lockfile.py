@@ -49,7 +49,12 @@ class SkillsLock:
     def __init__(self, root: Path):
         self.root = Path(root)
         self.path = self.root / LOCK_NAME
-        self.data: Dict[str, Any] = {"version": LOCK_VERSION, "skills": {}, "providers": {}}
+        self.data: Dict[str, Any] = {
+            "version": LOCK_VERSION,
+            "skills": {},
+            "providers": {},
+            "conflicts": {},
+        }
         self._load()
 
     def _load(self) -> None:
@@ -63,6 +68,7 @@ class SkillsLock:
             loaded.setdefault("version", LOCK_VERSION)
             loaded.setdefault("skills", {})
             loaded.setdefault("providers", {})
+            loaded.setdefault("conflicts", {})
             self.data = loaded
 
     def save(self) -> None:
@@ -105,3 +111,20 @@ class SkillsLock:
         """Drop a provider receipt, e.g. after --prune removes the copy."""
         skills = self.data["providers"].get(provider, {}).get("skills", {})
         skills.pop(name, None)
+
+    # ---- conflict section ----
+
+    def record_conflict(
+        self, name: str, provider: str, quarantined_to: Optional[str], resolution: str
+    ) -> None:
+        """Log a same-name skill conflict. quarantined_to is where the losing
+        copy was parked (None when nothing was moved). Entries accumulate as
+        a list so repeated conflicts stay visible until resolved on disk."""
+        entry = {
+            "provider": provider,
+            "resolution": resolution,
+            "at": _now(),
+        }
+        if quarantined_to:
+            entry["quarantinedTo"] = quarantined_to
+        self.data["conflicts"].setdefault(name, []).append(entry)

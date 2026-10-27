@@ -6,6 +6,8 @@ Discovers and migrates configs, MCP servers, skills, and rules from provider-spe
 import json
 import re
 import shutil
+import sys
+import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from .config import UnifiedConfig, deep_merge, load_json, save_json, ConfigError
@@ -18,7 +20,7 @@ from .providers import (
     normalize_mcp_server,
 )
 from .lockfile import SkillsLock, dir_hash
-from .sync import dirs_equal, strip_managed_markers
+from .sync import _SKILL_ALIAS_RE, dirs_equal, strip_managed_markers
 
 
 class MigrationError(Exception):
@@ -27,15 +29,36 @@ class MigrationError(Exception):
     pass
 
 
+# Same-name skills with different content are quarantined here, one level
+# outside the skills dir, so providers never discover a folder whose name
+# does not match its SKILL.md frontmatter. Aliases like '<name>.claude'
+# inside the skills dir create exactly that broken shape; conflicts live
+# outside the store until the user resolves them.
+SKILL_CONFLICTS_DIR = "skill-conflicts"
+
+_FRONTMATTER_NAME_RE = re.compile(r"^name:\s*(\S+)", re.M)
+
+
+def _skill_frontmatter_name(skill_md: Path) -> Optional[str]:
+    """The 'name:' declared inside a SKILL.md, if present."""
+    try:
+        m = _FRONTMATTER_NAME_RE.search(skill_md.read_text(errors="replace"))
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
 class ProviderMigrator:
     """Handles migration from provider-specific configs to unified config."""
 
     # Known provider config locations to scan (from the provider registry)
     PROVIDER_PATHS = {name: spec.read_paths for name, spec in PROVIDERS.items()}
 
-    def __init__(self, env: Optional[AgentEnv] = None):
+    def __init__(self, env: Optional[AgentEnv] = None, interactive: Optional[bool] = None):
         self.env = env or AgentEnv()
         self.config = UnifiedConfig(env)
+        # None: prompt when stdin is a TTY, quarantine silently otherwise.
+        self.interactive = sys.stdin.isatty() if interactive is None else interactive
 
     def _find_first_existing(self, paths: List[str]) -> Optional[Path]:
         """Find the first existing path from a list of candidates."""
@@ -251,7 +274,7 @@ class ProviderMigrator:
         for skill_file in sorted(src_dir.glob("*.md")):
             if skill_file.name != "SKILL.md":
                 migrated += self._import_one_loose_skill(skill_file, target_root, provider, lock)
-        if migrated:
+        if lock.data["skills"] or lock.data["conflicts"]:
             lock.save()
         return migrated
 
@@ -264,22 +287,89 @@ class ProviderMigrator:
             if dirs_equal(skill_dir, target):
                 print(f"  Skipping duplicate skill: {name}")
                 return 0
-            # Same name, different content: find or mint an alias, reusing an
-            # existing alias whose content already matches (like MCP dedup).
-            alias = f"{name}.{provider}"
-            n = 2
-            while (target_root / alias).is_dir() and not dirs_equal(skill_dir, target_root / alias):
-                alias = f"{name}.{provider}.{n}"
-                n += 1
-            if (target_root / alias).is_dir():
-                print(f"  Skipping duplicate skill: {name} (as {alias})")
-                return 0
-            print(f"  Skill '{name}' differs from existing; kept as '{alias}'")
-            target = target_root / alias
+            return self._resolve_skill_conflict(
+                name,
+                incoming=skill_dir,
+                existing=target,
+                target_root=target_root,
+                provider=provider,
+                lock=lock,
+            )
         shutil.copytree(skill_dir, target)
         lock.record_source(target.name, dir_hash(target), origin=f"imported:{provider}")
         print(f"  Migrated skill: {target.name}")
         return 1
+
+    def _conflict_dir(self, target_root: Path, name: str, tag: str) -> Path:
+        """First free quarantine path for a conflicting skill."""
+        conflicts = target_root.parent / SKILL_CONFLICTS_DIR / name
+        dest = conflicts / tag
+        n = 2
+        while dest.exists():
+            dest = conflicts / f"{tag}.{n}"
+            n += 1
+        return dest
+
+    def _resolve_skill_conflict(
+        self,
+        name: str,
+        incoming: Path,
+        existing: Path,
+        target_root: Path,
+        provider: str,
+        lock: SkillsLock,
+    ) -> int:
+        """Same skill name, different content: never mint a '<name>.<provider>'
+        folder inside the skills store (its frontmatter name would no longer
+        match the folder name, breaking the skill). Default: quarantine the
+        incoming copy under skill-conflicts/ and keep the existing one; on a
+        TTY, ask which copy to hold. Returns skills imported (0 or 1)."""
+        existing_fm = _skill_frontmatter_name(existing / "SKILL.md")
+        incoming_fm = _skill_frontmatter_name(incoming / "SKILL.md")
+        print(f"  Skill conflict: '{name}'")
+        print(f"    existing: {existing} (frontmatter name: {existing_fm})")
+        print(f"    incoming: {incoming} (frontmatter name: {incoming_fm})")
+
+        choice = "keep"
+        if self.interactive:
+            answer = (
+                input(
+                    f"    Hold which copy? [k]eep existing / [r]eplace with "
+                    f"{provider} copy / [s]kip (default: k): "
+                )
+                .strip()
+                .lower()
+            )
+            if answer in ("r", "replace"):
+                choice = "replace"
+            elif answer in ("s", "skip"):
+                choice = "skip"
+
+        if choice == "skip":
+            print(f"    Skipped {name} from {provider}; left unresolved")
+            lock.record_conflict(name, provider, None, resolution="skipped")
+            return 0
+
+        loser = self._conflict_dir(target_root, name, provider)
+        loser.parent.mkdir(parents=True, exist_ok=True)
+        if choice == "replace":
+            displaced = self._conflict_dir(target_root, name, "unified")
+            displaced.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(existing), str(displaced))
+            shutil.copytree(incoming, existing)
+            lock.record_source(name, dir_hash(existing), origin=f"imported:{provider}")
+            lock.record_conflict(
+                name, provider, str(displaced), resolution=f"replaced-by-{provider}"
+            )
+            print(f"    Replaced with {provider} copy; previous held at {displaced}")
+            return 1
+
+        # Copy, not move: the provider's own skills dir keeps its copy.
+        shutil.copytree(incoming, loser)
+        lock.record_conflict(name, provider, str(loser), resolution="kept-existing")
+        print(f"    Kept existing; {provider} copy held at {loser}")
+        print(f"    Resolve with: compare {loser} to {existing}, then remove the loser")
+        return 0
 
     def _import_one_loose_skill(
         self, skill_file: Path, target_root: Path, provider: str, lock: SkillsLock
@@ -290,18 +380,20 @@ class ProviderMigrator:
             if target.read_bytes() == skill_file.read_bytes():
                 print(f"  Skipping duplicate skill: {name}")
                 return 0
-            alias = f"{name}.{provider}"
-            n = 2
-            while (target_root / alias / "SKILL.md").exists() and (
-                target_root / alias / "SKILL.md"
-            ).read_bytes() != skill_file.read_bytes():
-                alias = f"{name}.{provider}.{n}"
-                n += 1
-            if (target_root / alias / "SKILL.md").exists():
-                print(f"  Skipping duplicate skill: {name} (as {alias})")
-                return 0
-            print(f"  Skill '{name}' differs from existing; kept as '{alias}'")
-            target = target_root / alias / "SKILL.md"
+            # Stage the loose file as a dir-shaped skill and run the same
+            # conflict policy as directory skills.
+            with tempfile.TemporaryDirectory() as tmp:
+                staged = Path(tmp) / name
+                staged.mkdir()
+                shutil.copy2(skill_file, staged / "SKILL.md")
+                return self._resolve_skill_conflict(
+                    name,
+                    incoming=staged,
+                    existing=target.parent,
+                    target_root=target_root,
+                    provider=provider,
+                    lock=lock,
+                )
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(skill_file, target)
         lock.record_source(
@@ -309,6 +401,30 @@ class ProviderMigrator:
         )
         print(f"  Migrated skill: {target.parent.name}")
         return 1
+
+    def reconcile_skill_aliases(self, skills_dir: Path) -> int:
+        """Move legacy '<name>.<provider>' alias dirs out of the skills store
+        into skill-conflicts/<name>/<provider>/, preserving all content. Alias
+        folders break the skill rule that the folder name equal the SKILL.md
+        frontmatter name, so they can never load as skills anyway."""
+        moved = 0
+        lock = SkillsLock(skills_dir.parent)
+        for d in sorted(skills_dir.iterdir()):
+            if not d.is_dir() or not _SKILL_ALIAS_RE.match(d.name):
+                continue
+            base, _, suffix = d.name.partition(".")
+            provider_tag = re.sub(r"\.\d+$", "", suffix)
+            dest = self._conflict_dir(skills_dir, base, provider_tag)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(d), str(dest))
+            lock.record_conflict(base, provider_tag, str(dest), resolution="alias-reconciled")
+            print(f"  Moved alias {d.name} -> {dest}")
+            moved += 1
+        if moved:
+            lock.save()
+        else:
+            print("  No skill aliases found")
+        return moved
 
     def _read_rules_source(self, path: Path) -> str:
         """Read rules text from a file or a directory of rule files."""

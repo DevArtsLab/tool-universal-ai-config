@@ -71,10 +71,23 @@ class CLI:
         print(f"Config directory: {self.env.config}")
 
     def migrate(
-        self, provider: Optional[str] = None, project: bool = False, all_projects: bool = False
+        self,
+        provider: Optional[str] = None,
+        project: bool = False,
+        all_projects: bool = False,
+        interactive: Optional[bool] = None,
+        reconcile_aliases: bool = False,
     ) -> None:
         """Migrate existing provider configurations."""
         print("Starting migration...")
+
+        if interactive is not None:
+            self.migrator.interactive = interactive
+
+        if reconcile_aliases:
+            moved = self.migrator.reconcile_skill_aliases(self.env.skills)
+            print(f"\n✓ Reconciled {moved} skill alias(es) into {self.env.base}/skill-conflicts/")
+            return
 
         if all_projects:
             # Scan all projects and migrate their skills to global
@@ -285,6 +298,15 @@ class CLI:
             for item in flagged:
                 print(f"    - {item}")
 
+        conflicts = lock.data.get("conflicts", {})
+        if conflicts:
+            total = sum(len(v) for v in conflicts.values())
+            print(f"\nSkill conflicts: {total} recorded ({self.env.base}/skill-conflicts/)")
+            for name, entries in sorted(conflicts.items()):
+                latest = entries[-1]
+                where = latest.get("quarantinedTo") or "unresolved"
+                print(f"  {name}: {latest['resolution']} from {latest['provider']} -> {where}")
+
     def init_project(self) -> None:
         """Initialize .ai/ directory in current project."""
         project_root = find_project_root()
@@ -447,6 +469,16 @@ def main():
         action="store_true",
         help="Scan all projects and migrate their skills to global ~/.agents/skills",
     )
+    migrate_parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Never prompt on skill conflicts; quarantine the incoming copy",
+    )
+    migrate_parser.add_argument(
+        "--reconcile-aliases",
+        action="store_true",
+        help="Move legacy '<name>.<provider>' skill dirs to skill-conflicts/",
+    )
 
     # validate command
     subparsers.add_parser("validate", help="Validate configuration setup")
@@ -508,7 +540,13 @@ def main():
     if args.command == "init":
         cli.init(fresh=args.fresh)
     elif args.command == "migrate":
-        cli.migrate(provider=args.provider, project=args.project, all_projects=args.all_projects)
+        cli.migrate(
+            provider=args.provider,
+            project=args.project,
+            all_projects=args.all_projects,
+            interactive=False if args.no_interactive else None,
+            reconcile_aliases=args.reconcile_aliases,
+        )
     elif args.command == "validate":
         cli.validate()
     elif args.command == "status":
