@@ -323,6 +323,9 @@ provider out of skill sync entirely - useful when a provider already reads
 another location (e.g. Devin scanning `~/.claude/skills`), which would
 otherwise list every skill twice.
 
+Migration aliases (`<name>.<provider>`, e.g. `my-skill.cursor`) are
+local-only reconciliation copies and are never synced to any provider.
+
 Rules synced into shared files (like a project `AGENTS.md`) are wrapped in
 `<!-- BEGIN ai-config managed -->` markers so repeated syncs update in place
 without touching the rest of the file.

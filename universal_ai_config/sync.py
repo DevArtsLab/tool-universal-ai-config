@@ -31,6 +31,14 @@ _MARKER_RE = re.compile(r"<!-- (BEGIN|END) ai-config managed -->\n?")
 # migrate) discovers a backup's SKILL.md as a real skill.
 SKILLS_BACKUP_DIR = ".ai-config-backups"
 
+# Migration aliases (<name>.<provider>, optionally .<n>) preserve divergent
+# same-name skills in the unified store. They are local reconciliation
+# artifacts: syncing them back out would give every provider every other
+# provider's variant.
+_SKILL_ALIAS_RE = re.compile(
+    r"^.+\.(?:" + "|".join(re.escape(p) for p in PROVIDERS) + r")(?:\.\d+)?$"
+)
+
 
 def strip_managed_markers(text: str) -> str:
     """Remove every ai-config managed block from text.
@@ -305,7 +313,7 @@ class SyncEngine:
         """
         if isinstance(prov_conf, dict) and prov_conf.get("enabled") is False:
             return None
-        names = self._list_skill_names(skills_dir)
+        names = [n for n in self._list_skill_names(skills_dir) if not _SKILL_ALIAS_RE.match(n)]
         enabled = (global_conf or {}).get("enabled")
         if isinstance(enabled, list) and enabled:
             names = [n for n in names if n in enabled]

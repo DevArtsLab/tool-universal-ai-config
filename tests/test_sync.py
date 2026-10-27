@@ -353,6 +353,23 @@ def test_sync_skills_scoping_exclude(sandbox):
     assert not (sandbox / ".cursor" / "skills" / "other-skill").exists()
 
 
+def test_sync_skills_never_syncs_migration_aliases(sandbox):
+    """name.<provider> dirs are migration artifacts; they stay local."""
+    (sandbox / ".cursor").mkdir()
+    for alias in ("demo-skill.cursor", "demo-skill.devin.2"):
+        d = AgentEnv().skills / alias
+        d.mkdir()
+        (d / "SKILL.md").write_text("# Variant\n")
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    skills = sandbox / ".cursor" / "skills"
+    assert (skills / "demo-skill" / "SKILL.md").exists()
+    assert not (skills / "demo-skill.cursor").exists()
+    assert not (skills / "demo-skill.devin.2").exists()
+    assert "cursor" not in (skills / ".ai-config-skills").read_text()
+
+
 def test_sync_skills_provider_disabled(sandbox):
     """providers.<name>.skills.enabled: false opts out of skills sync."""
     (sandbox / ".cursor").mkdir()

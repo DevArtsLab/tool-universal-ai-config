@@ -17,7 +17,7 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `--prune` removes synced skills that left scope, tracked via a
   `.ai-config-skills` manifest so user skills are never deleted
 - Skill migration dedupes identical skills; conflicting same-name skills
-  are kept under a `<name>.<provider>` alias
+  are kept under a `<name>.<provider>` alias that never syncs back out
 - `ai-config --version`
 - CI runs pytest, `black --check`, and `mypy` on every push and PR to main
 
