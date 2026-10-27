@@ -205,9 +205,7 @@ class SyncEngine:
             # Refresh unified-store facts for every skill, synced or not, so
             # createdAt/updatedAt track content changes without metadata
             # comments inside SKILL.md files.
-            for skill_dir in sorted(skills_dir.glob("*/")):
-                if (skill_dir / "SKILL.md").is_file():
-                    lock.record_source(skill_dir.name, dir_hash(skill_dir))
+            lock.reconcile_sources(skills_dir)
             lock.save()
 
         return result

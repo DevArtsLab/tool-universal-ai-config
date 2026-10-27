@@ -260,7 +260,10 @@ class CLI:
             return
         lock = SkillsLock(self.env.base)
         pruned = lock.prune_conflicts()
-        if pruned:
+        sources_changed = False
+        if self.env.skills.is_dir():
+            sources_changed = lock.reconcile_sources(self.env.skills)
+        if pruned or sources_changed:
             lock.save()
         skills = lock.data.get("skills", {})
         providers = lock.data.get("providers", {})

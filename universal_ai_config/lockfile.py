@@ -96,22 +96,49 @@ class SkillsLock:
 
     # ---- unified-store section ----
 
-    def record_source(self, name: str, content_hash: str, origin: Optional[str] = None) -> None:
+    def record_source(
+        self, name: str, content_hash: str, origin: Optional[str] = None, when: Optional[str] = None
+    ) -> bool:
         """Register the current unified-store hash for a skill. Sets
-        createdAt on first sight; bumps updatedAt whenever the hash moves."""
+        createdAt on first sight; bumps updatedAt whenever the hash moves.
+        'when' seeds the timestamps on first record (e.g. content mtime for
+        pre-existing skills); later changes always stamp the time observed.
+        Returns True when the record changed."""
+        changed = False
         entry = self.data["skills"].get(name)
         if entry is None:
-            entry = {"createdAt": _now()}
+            entry = {"createdAt": when or _now()}
             self.data["skills"][name] = entry
+            changed = True
         if entry.get("hash") != content_hash:
             entry["hash"] = content_hash
-            entry["updatedAt"] = _now()
-        if origin:
+            entry["updatedAt"] = when or _now()
+            changed = True
+        if origin and entry.get("origin") != origin:
             entry["origin"] = origin
+            changed = True
+        return changed
 
     def source_hash(self, name: str) -> Optional[str]:
         entry = self.data["skills"].get(name)
         return entry.get("hash") if isinstance(entry, dict) else None
+
+    def reconcile_sources(self, skills_dir: Path) -> bool:
+        """Refresh 'skills' entries for every skill dir on disk. New entries
+        are timestamped from the newest file mtime (a real "last updated"
+        for pre-existing skills, not just first time ai-config noticed).
+        Returns True when the lock changed."""
+        changed = False
+        for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
+            d = skill_md.parent
+            latest = max((p.stat().st_mtime for p in skill_files(d).values()), default=None)
+            when = (
+                datetime.fromtimestamp(latest, timezone.utc).isoformat(timespec="seconds")
+                if latest
+                else None
+            )
+            changed |= self.record_source(d.name, dir_hash(d), when=when)
+        return changed
 
     # ---- provider section ----
 
