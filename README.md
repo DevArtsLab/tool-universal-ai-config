@@ -240,7 +240,9 @@ ai-config validate
 
 Show current configuration status. When a skills lockfile exists, also
 reports per-provider skill state (in sync, stale, drifted, missing) and
-any recorded conflicts.
+any recorded conflicts. Reading live hashes refreshes the lockfile in
+place: source entries are reconciled with the skills dir and conflict
+records whose parked copies were removed are pruned.
 
 ```bash
 ai-config status

@@ -39,7 +39,7 @@ SKILLS_BACKUP_DIR = ".ai-config-backups"
 # every provider every other provider's variant. `migrate
 # --reconcile-aliases` moves them to skill-conflicts/.
 _SKILL_ALIAS_RE = re.compile(
-    r"^.+\.(?:" + "|".join(re.escape(p) for p in PROVIDERS) + r")(?:\.\d+)?$"
+    r"^(?P<base>.+)\.(?P<provider>" + "|".join(re.escape(p) for p in PROVIDERS) + r")(?:\.\d+)?$"
 )
 
 
@@ -137,9 +137,10 @@ def _upsert_managed_block(path: Path, content: str) -> bool:
 
     # Remove every existing managed block, including nested ones: leftover
     # blocks from older runs would otherwise accumulate on each sync.
-    existing = strip_managed_markers(path.read_text()).rstrip()
+    old_text = path.read_text()
+    existing = strip_managed_markers(old_text).rstrip()
     new_text = f"{existing}\n\n{block}" if existing else block
-    if path.read_text() == new_text:
+    if old_text == new_text:
         return False
     path.write_text(new_text)
     return True
@@ -181,7 +182,7 @@ class SyncEngine:
         if providers:
             unknown = [p for p in providers if p not in PROVIDERS]
             for name in unknown:
-                result.add(name, "-", Path(""), "error", f"unknown provider")
+                result.add(name, "-", Path(""), "error", "unknown provider")
             targets = [p for p in providers if p in PROVIDERS]
         elif all_providers:
             targets = list(PROVIDERS.keys())
@@ -203,7 +204,7 @@ class SyncEngine:
                 )
         rules_text = self._read_rules(project_root)
         skills_dir = (project_root / ".ai" / "skills") if project_root else self.env.skills
-        lock = SkillsLock(skills_dir.parent) if skills_dir else None
+        lock = SkillsLock(skills_dir.parent)
 
         for name in targets:
             spec = PROVIDERS[name]
@@ -355,7 +356,9 @@ class SyncEngine:
     def _list_skill_names(skills_dir: Path) -> List[str]:
         """Skill names in a directory: subdirs containing a SKILL.md."""
         return sorted(
-            d.name for d in skills_dir.iterdir() if d.is_dir() and (d / "SKILL.md").exists()
+            d.name
+            for d in skills_dir.iterdir()
+            if d.is_dir() and not d.name.startswith(".") and (d / "SKILL.md").exists()
         )
 
     def _scoped_skill_names(
@@ -568,24 +571,9 @@ class SyncEngine:
                     result.add(provider, "skills", target, "planned", f"would {verb} {name}")
                     managed.add(name)
                     continue
-                if target.is_symlink() or target.exists():
-                    last_pushed = lock.provider_hash(provider, name) if lock else None
-                    # Overwrite silently only when the target still holds exactly
-                    # what we last pushed (or is a stray non-dir at a managed
-                    # path, unlinked as before). A managed copy whose bytes
-                    # differ from the recorded hash (or that predates lock
-                    # recording) may have been edited in place: preserve it like
-                    # an unmanaged copy.
-                    if name in managed and (
-                        not target.is_dir()
-                        or (last_pushed is not None and dir_hash(target) == last_pushed)
-                    ):
-                        self._remove_path(target)
-                    else:
-                        backup = self._backup_path(dst_dir, name)
-                        backup.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.move(str(target), str(backup))
-                        result.add(provider, "skills", backup, "written", f"backed up {name}")
+                self._displace_target(
+                    dst_dir, target, name, provider, lock, result, trusted=name in managed
+                )
                 target.parent.mkdir(parents=True, exist_ok=True)
                 linked = False
                 if link:
@@ -616,7 +604,12 @@ class SyncEngine:
                     result.add(provider, "skills", target, "planned", f"would remove {name}")
                     continue
                 try:
-                    self._remove_path(target)
+                    # Prune gets the same drift protection as overwrite: a
+                    # managed copy whose bytes moved since the recorded push
+                    # is backed up, never deleted.
+                    self._displace_target(
+                        dst_dir, target, name, provider, lock, result, trusted=True
+                    )
                 except OSError as e:
                     # Keep it in the manifest so a later prune retries.
                     result.add(provider, "skills", target, "error", str(e))
@@ -641,6 +634,34 @@ class SyncEngine:
             shutil.rmtree(path)
         elif path.is_symlink() or path.exists():
             path.unlink()
+
+    def _displace_target(
+        self,
+        dst_dir: Path,
+        target: Path,
+        name: str,
+        provider: str,
+        lock: Optional[SkillsLock],
+        result: SyncResult,
+        trusted: bool,
+    ) -> None:
+        """Free a skill path in the provider dir. A trusted target that still
+        holds exactly what was last pushed (or is a stray non-dir at a managed
+        path, unlinked as before) is removed outright. Anything else may carry
+        local edits - unknown content or bytes that differ from the recorded
+        push - and is moved to .ai-config-backups/ instead of deleted."""
+        if not target.is_symlink() and not target.exists():
+            return
+        last_pushed = lock.provider_hash(provider, name) if lock else None
+        if trusted and (
+            not target.is_dir() or (last_pushed is not None and dir_hash(target) == last_pushed)
+        ):
+            self._remove_path(target)
+            return
+        backup = self._backup_path(dst_dir, name)
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(target), str(backup))
+        result.add(provider, "skills", backup, "written", f"backed up {name}")
 
     @staticmethod
     def _backup_path(dst_dir: Path, name: str) -> Path:

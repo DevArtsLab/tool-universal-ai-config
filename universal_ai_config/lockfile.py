@@ -109,7 +109,8 @@ class SkillsLock:
         Returns True when the record changed."""
         changed = False
         entry = self.data["skills"].get(name)
-        if entry is None:
+        if not isinstance(entry, dict):
+            # Missing or corrupt (hand-edited) entry: start it over.
             entry = {"createdAt": when or _now()}
             self.data["skills"][name] = entry
             changed = True
@@ -139,6 +140,9 @@ class SkillsLock:
         changed = False
         for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
             d = skill_md.parent
+            # Dot-dirs are tool internals (staging, backups), never skills.
+            if d.name.startswith("."):
+                continue
             latest = max((p.stat().st_mtime for p in skill_files(d).values()), default=None)
             when = (
                 datetime.fromtimestamp(latest, timezone.utc).isoformat(timespec="seconds")
@@ -180,19 +184,34 @@ class SkillsLock:
 
     def record_sync(self, provider: str, name: str, content_hash: str) -> None:
         """Record that content_hash was pushed to provider for skill name."""
-        prov = self.data["providers"].setdefault(provider, {"skills": {}})
-        prov.setdefault("skills", {})[name] = {"hash": content_hash, "syncedAt": _now()}
+        prov = self.data["providers"].get(provider)
+        if not isinstance(prov, dict):
+            prov = {}
+            self.data["providers"][provider] = prov
+        skills = prov.get("skills")
+        if not isinstance(skills, dict):
+            skills = {}
+            prov["skills"] = skills
+        skills[name] = {"hash": content_hash, "syncedAt": _now()}
 
     def provider_hash(self, provider: str, name: str) -> Optional[str]:
         """Hash last pushed to provider, or None if never recorded."""
-        prov = self.data["providers"].get(provider, {})
-        entry = prov.get("skills", {}).get(name)
+        prov = self.data["providers"].get(provider)
+        if not isinstance(prov, dict):
+            return None
+        skills = prov.get("skills")
+        if not isinstance(skills, dict):
+            return None
+        entry = skills.get(name)
         return entry.get("hash") if isinstance(entry, dict) else None
 
     def forget_sync(self, provider: str, name: str) -> None:
         """Drop a provider receipt, e.g. after --prune removes the copy."""
-        skills = self.data["providers"].get(provider, {}).get("skills", {})
-        skills.pop(name, None)
+        prov = self.data["providers"].get(provider)
+        if isinstance(prov, dict):
+            skills = prov.get("skills")
+            if isinstance(skills, dict):
+                skills.pop(name, None)
 
     # ---- conflict section ----
 
@@ -209,7 +228,11 @@ class SkillsLock:
         }
         if quarantined_to:
             entry["quarantinedTo"] = quarantined_to
-        self.data["conflicts"].setdefault(name, []).append(entry)
+        entries = self.data["conflicts"].setdefault(name, [])
+        if not isinstance(entries, list):
+            entries = []
+            self.data["conflicts"][name] = entries
+        entries.append(entry)
 
     def prune_conflicts(self) -> int:
         """Drop conflict entries whose quarantinedTo path no longer exists -
@@ -218,12 +241,18 @@ class SkillsLock:
         way. Returns entries removed."""
         removed = 0
         for name in list(self.data["conflicts"]):
+            entries = self.data["conflicts"][name]
+            if not isinstance(entries, list):
+                # Corrupt entry (hand-edited): drop it rather than crash.
+                del self.data["conflicts"][name]
+                continue
             kept = [
                 e
-                for e in self.data["conflicts"][name]
-                if not e.get("quarantinedTo") or Path(e["quarantinedTo"]).exists()
+                for e in entries
+                if isinstance(e, dict)
+                and (not e.get("quarantinedTo") or Path(e["quarantinedTo"]).exists())
             ]
-            removed += len(self.data["conflicts"][name]) - len(kept)
+            removed += len(entries) - len(kept)
             if kept:
                 self.data["conflicts"][name] = kept
             else:

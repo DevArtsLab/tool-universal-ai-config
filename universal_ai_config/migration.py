@@ -284,6 +284,10 @@ class ProviderMigrator:
         # Depth-1 only: a SKILL.md nested inside a skill's own companion dirs
         # is part of that skill, not a separate top-level skill.
         for skill_file in sorted(src_dir.glob("*/SKILL.md")):
+            # Dot-dirs (.ai-config-backups/, .<name>.ai-config-staged) are
+            # tool internals, never skills.
+            if skill_file.parent.name.startswith("."):
+                continue
             migrated += self._import_one_skill(skill_file.parent, target_root, provider, lock)
         for skill_file in sorted(src_dir.glob("*.md")):
             if skill_file.name != "SKILL.md":
@@ -477,10 +481,13 @@ class ProviderMigrator:
         moved = 0
         lock = SkillsLock(skills_dir.parent)
         for d in sorted(skills_dir.iterdir()):
-            if not d.is_dir() or not _SKILL_ALIAS_RE.match(d.name):
+            if not d.is_dir():
                 continue
-            base, _, suffix = d.name.partition(".")
-            provider_tag = re.sub(r"\.\d+$", "", suffix)
+            m = _SKILL_ALIAS_RE.match(d.name)
+            if not m:
+                continue
+            base = m.group("base")
+            provider_tag = m.group("provider")
             dest = self._conflict_dir(skills_dir, base, provider_tag)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(d), str(dest))

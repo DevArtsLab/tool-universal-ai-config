@@ -1,6 +1,7 @@
 """Tests for the skills lockfile and lock-aware sync behavior."""
 
 import json
+import shutil
 import pytest
 from pathlib import Path
 
@@ -178,3 +179,94 @@ def test_lock_load_tolerates_malformed_sections(tmp_path):
     assert lock.data["skills"] == {}
     assert lock.data["providers"] == {}
     assert lock.data["conflicts"] == {}
+
+
+def test_lock_nested_corruption_does_not_crash(tmp_path):
+    """Hand-edited nested values (providers not a dict, conflicts not a
+    list) degrade to empty instead of raising inside record/lookup calls."""
+    (tmp_path / LOCK_NAME).write_text(
+        json.dumps(
+            {
+                "skills": {"a": "not-a-dict"},
+                "providers": {"cursor": "broken"},
+                "conflicts": {
+                    "x": "not-a-list",
+                    "y": [42, {"provider": "claude", "resolution": "kept"}],
+                },
+            }
+        )
+    )
+    lock = SkillsLock(tmp_path)
+
+    lock.record_source("a", "h1")
+    assert lock.source_hash("a") == "h1"
+    lock.record_sync("cursor", "a", "h1")
+    assert lock.provider_hash("cursor", "a") == "h1"
+    lock.record_conflict("x", "claude", None, "skipped")
+    assert lock.data["conflicts"]["x"][-1]["resolution"] == "skipped"
+    removed = lock.prune_conflicts()
+    assert "y" in lock.data["conflicts"]
+    assert lock.data["conflicts"]["y"] == [{"provider": "claude", "resolution": "kept"}]
+    lock.forget_sync("cursor", "a")
+    assert lock.provider_hash("cursor", "a") is None
+
+
+def test_prune_backs_up_drifted_managed_skill(sandbox):
+    """--prune applies the same drift protection as overwrite: a managed
+    copy edited since the recorded push is backed up, never deleted."""
+    (sandbox / ".cursor").mkdir()
+    env = AgentEnv()
+    engine = SyncEngine(env)
+    engine.sync(providers=["cursor"])
+
+    target = sandbox / ".cursor" / "skills" / "demo-skill"
+    target.unlink()
+    target.mkdir()
+    (target / "SKILL.md").write_text("# Locally edited\n")
+    shutil.rmtree(env.skills / "demo-skill")  # skill leaves sync scope
+
+    engine.sync(providers=["cursor"], prune=True)
+
+    backups = sandbox / ".cursor" / "skills" / SKILLS_BACKUP_DIR
+    assert (backups / "demo-skill" / "SKILL.md").read_text() == "# Locally edited\n"
+    assert not target.exists()
+    lock = SkillsLock(env.base)
+    assert lock.provider_hash("cursor", "demo-skill") is None
+
+
+def test_prune_removes_undrifted_managed_dir(sandbox):
+    """A managed real dir still holding the recorded push is removed by
+    --prune outright, with no backup."""
+    (sandbox / ".cursor").mkdir()
+    env = AgentEnv()
+    engine = SyncEngine(env)
+    engine.sync(providers=["cursor"])
+
+    target = sandbox / ".cursor" / "skills" / "demo-skill"
+    target.unlink()
+    target.mkdir()
+    (target / "SKILL.md").write_text("# Demo\n")  # same bytes as pushed
+    shutil.rmtree(env.skills / "demo-skill")
+
+    engine.sync(providers=["cursor"], prune=True)
+
+    skills = sandbox / ".cursor" / "skills"
+    assert not target.exists()
+    assert not (skills / SKILLS_BACKUP_DIR).exists()
+
+
+def test_dot_dirs_are_never_skills(sandbox):
+    """Tool-internal dirs like .<name>.ai-config-staged must not sync to
+    providers or land in the lock."""
+    staged = AgentEnv().skills / ".demo-skill.ai-config-staged"
+    staged.mkdir(parents=True)
+    (staged / "SKILL.md").write_text("# Stranded staging dir\n")
+    (sandbox / ".cursor").mkdir()
+    env = AgentEnv()
+
+    SyncEngine(env).sync(providers=["cursor"])
+
+    skills = sandbox / ".cursor" / "skills"
+    assert not (skills / ".demo-skill.ai-config-staged").exists()
+    lock = SkillsLock(env.base)
+    assert ".demo-skill.ai-config-staged" not in lock.data["skills"]

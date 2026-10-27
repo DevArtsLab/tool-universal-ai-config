@@ -286,6 +286,21 @@ def test_reconcile_skill_aliases(sandbox):
     assert (env.base / "skill-conflicts" / "my-skill" / "claude.2" / "SKILL.md").exists()
 
 
+def test_reconcile_skill_aliases_dotted_name(sandbox):
+    """'foo.bar.claude' splits at the provider suffix: base 'foo.bar',
+    provider 'claude' - not base 'foo' with tag 'bar.claude'."""
+    env = AgentEnv()
+    d = env.skills / "foo.bar.claude"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("---\nname: foo.bar\n---\n")
+
+    moved = ProviderMigrator(env, interactive=False).reconcile_skill_aliases(env.skills)
+
+    assert moved == 1
+    assert (env.base / "skill-conflicts" / "foo.bar" / "claude" / "SKILL.md").exists()
+    assert not (env.base / "skill-conflicts" / "foo").exists()
+
+
 def test_migrate_skill_copies_companion_files(sandbox):
     env = AgentEnv()
     _write_claude_skill(sandbox, extra={"references/deep.md": "# Deep\n"})

@@ -85,6 +85,12 @@ class CLI:
             self.migrator.interactive = interactive
 
         if reconcile_aliases:
+            if provider or project or all_projects:
+                print(
+                    "Error: --reconcile-aliases cannot combine with a provider "
+                    "argument, --project, or --all-projects"
+                )
+                sys.exit(1)
             moved = self.migrator.reconcile_skill_aliases(self.env.skills)
             print(f"\n✓ Reconciled {moved} skill alias(es) into {self.env.base}/skill-conflicts/")
             return
