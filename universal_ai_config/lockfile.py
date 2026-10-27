@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 LOCK_NAME = ".ai-config-lock.json"
+NPM_LOCK_NAME = ".skill-lock.json"  # sibling file owned by the npm skills CLI
 LOCK_VERSION = 1
 
 # Files that carry no skill content but differ constantly on disk (Finder
@@ -127,7 +128,12 @@ class SkillsLock:
         """Refresh 'skills' entries for every skill dir on disk. New entries
         are timestamped from the newest file mtime (a real "last updated"
         for pre-existing skills, not just first time ai-config noticed).
+        Skills installed by the npm 'skills' CLI (recorded in the sibling
+        .skill-lock.json) get origin stamped as 'github:<source>' so
+        repo-sourced skills stay distinguishable from authored ones.
         Returns True when the lock changed."""
+        npm_lock = skills_dir.parent / NPM_LOCK_NAME
+        npm_origins = self._npm_lock_origins(npm_lock)
         changed = False
         for skill_md in sorted(skills_dir.glob("*/SKILL.md")):
             d = skill_md.parent
@@ -137,8 +143,30 @@ class SkillsLock:
                 if latest
                 else None
             )
-            changed |= self.record_source(d.name, dir_hash(d), when=when)
+            changed |= self.record_source(
+                d.name, dir_hash(d), origin=npm_origins.get(d.name), when=when
+            )
+            if npm_lock.is_file() and d.name not in npm_origins:
+                entry = self.data["skills"].get(d.name)
+                if isinstance(entry, dict) and str(entry.get("origin", "")).startswith("github:"):
+                    del entry["origin"]
+                    changed = True
         return changed
+
+    @staticmethod
+    def _npm_lock_origins(path: Path) -> Dict[str, str]:
+        """Map of skill name -> 'github:<source>' from a sibling npm
+        skills-CLI lockfile. Repo-installed skills (e.g. devartslab skills
+        pulled by projects via 'npx skills add') keep their provenance."""
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            return {}
+        origins = {}
+        for name, entry in (data.get("skills") or {}).items():
+            if isinstance(entry, dict) and entry.get("sourceType") == "github":
+                origins[name] = f"github:{entry.get('source', '')}".rstrip(":")
+        return origins
 
     # ---- provider section ----
 
