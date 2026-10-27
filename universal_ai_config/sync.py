@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 from .config import UnifiedConfig, deep_merge
 from .environment import AgentEnv, find_project_root
 from .formats import load_any_safe, save_any, FormatError
-from .lockfile import SkillsLock, dir_hash
+from .lockfile import SkillsLock, dir_hash, skill_files
 from .providers import PROVIDERS, ProviderSpec, SyncTargets, expand, render_mcp_servers
 
 BLOCK_BEGIN = "<!-- BEGIN ai-config managed -->"
@@ -76,14 +76,15 @@ def strip_managed_markers(text: str) -> str:
 
 
 def dirs_equal(a: Path, b: Path) -> bool:
-    """True when both directories hold the same files with equal bytes."""
+    """True when both directories hold the same files with equal bytes,
+    ignoring OS junk files (.DS_Store etc.) that carry no skill content."""
     if not a.is_dir() or not b.is_dir():
         return False
-    a_files = {p.relative_to(a) for p in a.rglob("*") if p.is_file()}
-    b_files = {p.relative_to(b) for p in b.rglob("*") if p.is_file()}
-    if a_files != b_files:
+    a_files = skill_files(a)
+    b_files = skill_files(b)
+    if set(a_files) != set(b_files):
         return False
-    return all((a / rel).read_bytes() == (b / rel).read_bytes() for rel in a_files)
+    return all(a_files[rel].read_bytes() == b_files[rel].read_bytes() for rel in a_files)
 
 
 @dataclass

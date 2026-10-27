@@ -19,7 +19,7 @@ from .providers import (
     normalize_mcp_name,
     normalize_mcp_server,
 )
-from .lockfile import SkillsLock, dir_hash
+from .lockfile import SkillsLock, dir_hash, skill_files
 from .sync import _SKILL_ALIAS_RE, dirs_equal, strip_managed_markers
 
 
@@ -287,6 +287,9 @@ class ProviderMigrator:
             if dirs_equal(skill_dir, target):
                 print(f"  Skipping duplicate skill: {name}")
                 return 0
+            if self._is_subset(skill_dir, target):
+                print(f"  Skipping subset skill: {name} ({provider} adds nothing)")
+                return 0
             return self._resolve_skill_conflict(
                 name,
                 incoming=skill_dir,
@@ -299,6 +302,15 @@ class ProviderMigrator:
         lock.record_source(target.name, dir_hash(target), origin=f"imported:{provider}")
         print(f"  Migrated skill: {target.name}")
         return 1
+
+    @staticmethod
+    def _is_subset(incoming: Path, existing: Path) -> bool:
+        """True when every content file in incoming exists in existing with
+        identical bytes: a thinner provider copy adds nothing and is a
+        duplicate, not a conflict."""
+        inc = skill_files(incoming)
+        ext = skill_files(existing)
+        return all(rel in ext and ext[rel].read_bytes() == p.read_bytes() for rel, p in inc.items())
 
     def _conflict_dir(self, target_root: Path, name: str, tag: str) -> Path:
         """First free quarantine path for a conflicting skill."""

@@ -27,15 +27,34 @@ from typing import Any, Dict, Optional
 LOCK_NAME = ".ai-config-lock.json"
 LOCK_VERSION = 1
 
+# Files that carry no skill content but differ constantly on disk (Finder
+# droppings, Windows thumbnails). They must not count toward equality or
+# hashes, or every compare produces phantom conflicts and drift.
+_IGNORED_NAMES = {".DS_Store", "Thumbs.db", "desktop.ini"}
+
+
+def _is_junk(path: Path) -> bool:
+    return path.name in _IGNORED_NAMES or path.name.startswith("._")
+
+
+def skill_files(path: Path) -> Dict[str, Path]:
+    """Content files in a skill dir, relative path -> absolute path.
+    Single source of truth for what counts as skill content; dir_hash and
+    dirs_equal must agree or drift detection disagrees with itself."""
+    return {
+        p.relative_to(path).as_posix(): p
+        for p in path.rglob("*")
+        if p.is_file() and not _is_junk(p)
+    }
+
 
 def dir_hash(path: Path) -> str:
     """Content fingerprint of a directory: sha256 over sorted
     (relative path, file bytes) pairs. Stable across mtime/mode noise."""
     h = hashlib.sha256()
-    for p in sorted(path.rglob("*")):
-        if p.is_file():
-            h.update(p.relative_to(path).as_posix().encode() + b"\0")
-            h.update(p.read_bytes() + b"\0")
+    for rel, p in sorted(skill_files(path).items()):
+        h.update(rel.encode() + b"\0")
+        h.update(p.read_bytes() + b"\0")
     return h.hexdigest()
 
 

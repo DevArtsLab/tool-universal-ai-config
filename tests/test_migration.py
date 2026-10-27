@@ -228,6 +228,40 @@ def test_migrate_skill_conflict_skip(sandbox, monkeypatch):
     assert not (env.base / "skill-conflicts").exists()
 
 
+def test_migrate_skill_subset_skips_quietly(sandbox, capsys):
+    """A provider copy holding a strict subset of the unified skill is a
+    duplicate, not a conflict: identical SKILL.md, missing companion files."""
+    env = AgentEnv()
+    existing = env.skills / "my-skill"
+    (existing / "references").mkdir(parents=True)
+    (existing / "SKILL.md").write_text("---\nname: my-skill\n---\n# Full\n")
+    (existing / "references" / "deep.md").write_text("# Deep\n")
+    _write_claude_skill(sandbox, body="---\nname: my-skill\n---\n# Full\n")
+
+    ProviderMigrator(env, interactive=False).migrate_provider("claude")
+
+    out = capsys.readouterr().out
+    assert "Skipping subset skill: my-skill" in out
+    assert not (env.base / "skill-conflicts").exists()
+
+
+def test_migrate_skill_ignores_ds_store(sandbox, capsys):
+    """.DS_Store and AppleDouble files never count toward equality."""
+    env = AgentEnv()
+    existing = env.skills / "my-skill"
+    existing.mkdir(parents=True)
+    (existing / "SKILL.md").write_text("# Skill\n")
+    (existing / ".DS_Store").write_bytes(b"junk-a")
+    src = _write_claude_skill(sandbox)
+    (src / "._SKILL.md").write_bytes(b"junk-b")
+
+    ProviderMigrator(env, interactive=False).migrate_provider("claude")
+
+    out = capsys.readouterr().out
+    assert "Skipping duplicate skill: my-skill" in out
+    assert not (env.base / "skill-conflicts").exists()
+
+
 def test_reconcile_skill_aliases(sandbox):
     """Legacy '<name>.<provider>' dirs move to skill-conflicts/ verbatim."""
     env = AgentEnv()
