@@ -314,7 +314,7 @@ class ProviderMigrator:
         if not legacy_rules or not legacy_rules.exists():
             return
 
-        unified_rules = self.env.config / "AGENTS.md"
+        unified_rules = self.env.rules
         unified_rules.parent.mkdir(parents=True, exist_ok=True)
 
         raw = self._read_rules_source(legacy_rules)

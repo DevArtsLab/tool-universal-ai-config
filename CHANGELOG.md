@@ -21,6 +21,11 @@ versions follow [Semantic Versioning](https://semver.org/).
 - `ai-config --version`
 - CI runs pytest, `black --check`, and `mypy` on every push and PR to main
 
+### Changed
+
+- Unified rules moved to `~/.agents/AGENTS.md`; `init` relocates a legacy
+  `config/AGENTS.md` there
+
 ### Fixed
 
 - Nested `BEGIN/END ai-config managed` blocks are flattened correctly,

@@ -75,6 +75,13 @@ class AgentEnv:
         return self.base / "config"
 
     @property
+    def rules(self) -> Path:
+        """Master rules file, at the root of the governed scope (the
+        AGENTS.md convention). `ai-config init` relocates a legacy
+        <base>/config/AGENTS.md here."""
+        return self.base / "AGENTS.md"
+
+    @property
     def skills(self) -> Path:
         """Shared skills directory."""
         return self.base / "skills"

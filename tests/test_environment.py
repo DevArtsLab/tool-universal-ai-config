@@ -87,3 +87,16 @@ def test_config_precedence_excludes_untrusted(owned_project, monkeypatch):
     with pytest.warns(SecurityWarning):
         precedence = env.get_config_precedence(cwd=owned_project)
     assert owned_project / ".ai" / "config.json" not in precedence
+
+
+def test_rules_path_is_base_agents_md(tmp_path, monkeypatch):
+    """Master rules live at ~/.agents/AGENTS.md only."""
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("AGENT_CONFIG_HOME", str(home / ".agents"))
+    env = AgentEnv()
+    env.initialize_dirs()
+
+    assert env.rules == env.base / "AGENTS.md"
+    (env.config / "AGENTS.md").write_text("legacy")
+    assert env.rules == env.base / "AGENTS.md"

@@ -199,7 +199,7 @@ def test_migrate_rules_dedupes_migrated_chunks(sandbox):
 
     ProviderMigrator(env).migrate_provider("claude")
 
-    unified = (env.config / "AGENTS.md").read_text()
+    unified = (env.rules).read_text()
     assert unified.count("Be nice.") == 1
 
 
@@ -211,13 +211,13 @@ def test_migrate_rules_strips_managed_blocks_on_reimport(sandbox):
     rules = "# Global Rules\n\n- Be nice.\n"
     claude = sandbox / ".claude"
     (claude / "skills").mkdir(parents=True)
-    (env.config / "AGENTS.md").write_text(rules)
+    (env.rules).write_text(rules)
     # Simulate a file after sync: managed block wrapping the same rules.
     (claude / "CLAUDE.md").write_text(f"# Custom\n\n{BLOCK_BEGIN}\n{rules}{BLOCK_END}\n")
 
     ProviderMigrator(env).migrate_provider("claude")
 
-    unified = (env.config / "AGENTS.md").read_text()
+    unified = (env.rules).read_text()
     assert unified.count("Be nice.") == 1
     assert "# Custom" in unified
     assert BLOCK_BEGIN not in unified
@@ -238,7 +238,7 @@ def test_migrate_skills_ignores_nested_skill_md(sandbox):
 def test_migrate_rules_keeps_substring_chunk(sandbox):
     """A distinct chunk that is a substring of an earlier chunk is kept."""
     env = AgentEnv()
-    (env.config / "AGENTS.md").write_text("# Unified\n")
+    (env.rules).write_text("# Unified\n")
     claude = sandbox / ".claude"
     (claude / "skills").mkdir(parents=True)  # marks provider as present
     # "- Be nice." is a substring of "- Be nice. Always." but is new content.
@@ -248,7 +248,7 @@ def test_migrate_rules_keeps_substring_chunk(sandbox):
 
     ProviderMigrator(env).migrate_provider("claude")
 
-    unified = (env.config / "AGENTS.md").read_text()
+    unified = (env.rules).read_text()
     assert "Be nice. Always." in unified
     assert unified.count("Be nice") == 2
 

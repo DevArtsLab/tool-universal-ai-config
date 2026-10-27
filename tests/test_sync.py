@@ -45,7 +45,7 @@ def sandbox(tmp_path, monkeypatch):
             "github": {"command": "npx", "args": ["-y", "gh-mcp"]},
         }
     )
-    (env.config / "AGENTS.md").write_text("# Rules\n\nBe nice.\n")
+    (env.rules).write_text("# Rules\n\nBe nice.\n")
     skill = env.skills / "demo-skill"
     skill.mkdir(parents=True)
     (skill / "SKILL.md").write_text("# Demo\n")
@@ -295,9 +295,7 @@ def test_sync_never_exports_markers_inside_block(sandbox):
     """Markers in the unified rules text are stripped before wrapping."""
     (sandbox / ".claude").mkdir()
     config = UnifiedConfig(AgentEnv())
-    (config.env.config / "AGENTS.md").write_text(
-        f"# Rules\n\n{BLOCK_BEGIN}\nsneaky\n{BLOCK_END}\n\nBe nice.\n"
-    )
+    (config.env.rules).write_text(f"# Rules\n\n{BLOCK_BEGIN}\nsneaky\n{BLOCK_END}\n\nBe nice.\n")
     target = sandbox / ".claude" / "CLAUDE.md"
 
     SyncEngine(AgentEnv()).sync(providers=["claude"])

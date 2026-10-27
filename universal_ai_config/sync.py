@@ -503,7 +503,7 @@ class SyncEngine:
     def _read_rules(self, project_root: Optional[Path]) -> Optional[str]:
         """Unified rules: user AGENTS.md, plus project AGENTS.md if syncing a project."""
         parts = []
-        user_rules = self.env.config / "AGENTS.md"
+        user_rules = self.env.rules
         if user_rules.exists():
             parts.append(user_rules.read_text())
         if project_root:

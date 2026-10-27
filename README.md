@@ -121,10 +121,10 @@ ai-config migrate --project
 
 ```
 ~/.agents/                  # All agent data in one place
+  ├── AGENTS.md           # Shared rules (global)
   ├── config/
   │   ├── config.json     # Unified config (all providers read this)
-  │   ├── mcp-config.json # MCP servers
-  │   └── AGENTS.md       # Shared rules
+  │   └── mcp-config.json # MCP servers
   ├── skills/             # Shared skills
   │   └── example-skill/
   ├── data/               # Long-term memory, datasets, plugins

@@ -26,9 +26,13 @@ class CLI:
         """Initialize new unified configuration structure."""
         print("Initializing universal AI configuration...")
 
-        if fresh and self.env.config.exists():
-            print(f"Removing existing config at: {self.env.config}")
-            shutil.rmtree(self.env.config)
+        if fresh:
+            if self.env.config.exists():
+                print(f"Removing existing config at: {self.env.config}")
+                shutil.rmtree(self.env.config)
+            master_rules = self.env.base / "AGENTS.md"
+            if master_rules.exists():
+                master_rules.unlink()
 
         # Create directory structure
         created = self.env.initialize_dirs()
@@ -41,8 +45,15 @@ class CLI:
             self.config.save_unified(default_config)
             print(f"  Created: {self.config.unified_config_path}")
 
+        # One-time relocation: rules belong at the base, not under config/
+        legacy_rules = self.env.config / "AGENTS.md"
+        master_rules = self.env.base / "AGENTS.md"
+        if legacy_rules.exists() and not master_rules.exists():
+            legacy_rules.rename(master_rules)
+            print(f"  Moved rules to: {master_rules}")
+
         # Create default AGENTS.md
-        agents_md = self.env.config / "AGENTS.md"
+        agents_md = self.env.rules
         if not agents_md.exists():
             agents_md.write_text(
                 "# Universal AI Configuration\n\n## Global Rules\n\nAdd your global AI agent rules here.\n"
