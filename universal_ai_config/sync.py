@@ -32,10 +32,12 @@ _MARKER_RE = re.compile(r"<!-- (BEGIN|END) ai-config managed -->\n?")
 # migrate) discovers a backup's SKILL.md as a real skill.
 SKILLS_BACKUP_DIR = ".ai-config-backups"
 
-# Migration aliases (<name>.<provider>, optionally .<n>) preserve divergent
-# same-name skills in the unified store. They are local reconciliation
-# artifacts: syncing them back out would give every provider every other
-# provider's variant.
+# Legacy migration aliases (<name>.<provider>, optionally .<n>) were minted
+# by versions before the skill-conflicts/ quarantine. Any still lying in
+# the store must never sync out - they are broken skills whose folder name
+# cannot match their SKILL.md frontmatter, and pushing them would give
+# every provider every other provider's variant. `migrate
+# --reconcile-aliases` moves them to skill-conflicts/.
 _SKILL_ALIAS_RE = re.compile(
     r"^.+\.(?:" + "|".join(re.escape(p) for p in PROVIDERS) + r")(?:\.\d+)?$"
 )
@@ -104,10 +106,30 @@ class SyncResult:
         self.actions.append(SyncAction(provider, kind, Path(path), status, detail))
 
 
+def _materialize_symlink(path: Path) -> None:
+    """Replace a symlink with a real file holding its target's bytes.
+
+    Writing through a symlink would silently modify the target, which may be
+    the unified rules file or a user's file elsewhere. The link object is
+    dropped but its content is preserved, and the original target file is
+    never touched. A broken or unreadable link is just unlinked.
+    """
+    if not path.is_symlink():
+        return
+    try:
+        body = path.read_bytes()
+    except OSError:
+        body = None
+    path.unlink()
+    if body is not None:
+        path.write_bytes(body)
+
+
 def _upsert_managed_block(path: Path, content: str) -> bool:
     """Insert or replace the ai-config managed block; True if file changed."""
     block = f"{BLOCK_BEGIN}\n{content.rstrip()}\n{BLOCK_END}\n"
     path.parent.mkdir(parents=True, exist_ok=True)
+    _materialize_symlink(path)
 
     if not path.exists():
         path.write_text(block)
@@ -209,8 +231,11 @@ class SyncEngine:
             # Refresh unified-store facts for every skill, synced or not, so
             # createdAt/updatedAt track content changes without metadata
             # comments inside SKILL.md files.
-            lock.reconcile_sources(skills_dir)
-            lock.save()
+            try:
+                lock.reconcile_sources(skills_dir)
+                lock.save()
+            except OSError as e:
+                result.add("-", "skills", lock.path, "error", f"lockfile update failed: {e}")
 
         return result
 
@@ -451,8 +476,12 @@ class SyncEngine:
                 if path.is_symlink() and path.resolve() == src.resolve():
                     result.add(provider, "rules", path, "skipped", "unchanged")
                     return
+                # Read through a symlink: content at its target counts as
+                # unmanaged, so a user's link to their own rules file is not
+                # silently redirected - it becomes a real file holding that
+                # text plus the managed block.
                 unmanaged = ""
-                if path.exists() and not path.is_symlink():
+                if path.exists():
                     unmanaged = strip_managed_markers(path.read_text(errors="replace")).strip()
                 if not unmanaged:
                     if dry_run:
@@ -460,9 +489,14 @@ class SyncEngine:
                         return
                     self._remove_path(path)
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.symlink_to(src.resolve())
-                    result.add(provider, "rules", path, "written", "linked")
-                    return
+                    try:
+                        path.symlink_to(src.resolve())
+                        result.add(provider, "rules", path, "written", "linked")
+                        return
+                    except OSError:
+                        # Platform cannot link (e.g. Windows without dev
+                        # mode): degrade to the managed block.
+                        pass
 
         if mode in ("mdc_dir", "md_dir"):
             path = path / ("ai-config.mdc" if mode == "mdc_dir" else "ai-config.md")
@@ -479,6 +513,7 @@ class SyncEngine:
                 result.add(provider, "rules", path, "skipped", "unchanged")
                 return
             path.parent.mkdir(parents=True, exist_ok=True)
+            _materialize_symlink(path)
             path.write_text(new_text)
             result.add(provider, "rules", path, "written")
             return
@@ -521,60 +556,83 @@ class SyncEngine:
         for name in names:
             src = src_dir / name
             target = dst_dir / name
-            src_hash = dir_hash(src)
-            if dirs_equal(src, target):
+            try:
+                src_hash = dir_hash(src)
+                if dirs_equal(src, target):
+                    managed.add(name)
+                    if lock and not dry_run:
+                        lock.record_sync(provider, name, src_hash)
+                    continue
+                if dry_run:
+                    verb = "link" if link else "copy"
+                    result.add(provider, "skills", target, "planned", f"would {verb} {name}")
+                    managed.add(name)
+                    continue
+                if target.is_symlink() or target.exists():
+                    last_pushed = lock.provider_hash(provider, name) if lock else None
+                    # Overwrite silently only when the target still holds exactly
+                    # what we last pushed (or is a stray non-dir at a managed
+                    # path, unlinked as before). A managed copy whose bytes
+                    # differ from the recorded hash (or that predates lock
+                    # recording) may have been edited in place: preserve it like
+                    # an unmanaged copy.
+                    if name in managed and (
+                        not target.is_dir()
+                        or (last_pushed is not None and dir_hash(target) == last_pushed)
+                    ):
+                        self._remove_path(target)
+                    else:
+                        backup = self._backup_path(dst_dir, name)
+                        backup.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(str(target), str(backup))
+                        result.add(provider, "skills", backup, "written", f"backed up {name}")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                linked = False
+                if link:
+                    try:
+                        target.symlink_to(src.resolve(), target_is_directory=True)
+                        linked = True
+                    except OSError:
+                        # Platform cannot link (Windows without dev mode):
+                        # degrade to a copy rather than aborting the sync.
+                        pass
+                if not linked:
+                    shutil.copytree(src, target)
+                detail = name if linked or not link else f"{name} (copied: symlink failed)"
+                result.add(provider, "skills", target, "written", detail)
                 managed.add(name)
-                if lock and not dry_run:
+                if lock:
                     lock.record_sync(provider, name, src_hash)
-                continue
-            if dry_run:
-                result.add(provider, "skills", target, "planned", f"would copy {name}")
-                managed.add(name)
-                continue
-            if target.is_symlink() or target.exists():
-                last_pushed = lock.provider_hash(provider, name) if lock else None
-                # Overwrite silently only when the target still holds exactly
-                # what we last pushed (or is a stray non-dir at a managed
-                # path, unlinked as before). A managed copy whose bytes
-                # differ from the recorded hash (or that predates lock
-                # recording) may have been edited in place: preserve it like
-                # an unmanaged copy.
-                if name in managed and (
-                    not target.is_dir()
-                    or (last_pushed is not None and dir_hash(target) == last_pushed)
-                ):
-                    self._remove_path(target)
-                else:
-                    backup = self._backup_path(dst_dir, name)
-                    backup.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.move(str(target), str(backup))
-                    result.add(provider, "skills", backup, "written", f"backed up {name}")
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if link:
-                target.symlink_to(src.resolve(), target_is_directory=True)
-            else:
-                shutil.copytree(src, target)
-            result.add(provider, "skills", target, "written", name)
-            managed.add(name)
-            if lock:
-                lock.record_sync(provider, name, src_hash)
+            except (OSError, shutil.Error) as e:
+                # One bad skill must not abort the whole provider sync.
+                result.add(provider, "skills", target, "error", str(e))
 
         stale = sorted(managed - keep)
+        removed = set()
         if prune:
             for name in stale:
                 target = dst_dir / name
                 if dry_run:
                     result.add(provider, "skills", target, "planned", f"would remove {name}")
                     continue
-                self._remove_path(target)
+                try:
+                    self._remove_path(target)
+                except OSError as e:
+                    # Keep it in the manifest so a later prune retries.
+                    result.add(provider, "skills", target, "error", str(e))
+                    continue
                 result.add(provider, "skills", target, "written", f"removed {name}")
+                removed.add(name)
                 if lock:
                     lock.forget_sync(provider, name)
-            managed -= set(stale)
+            managed -= removed
 
         if not dry_run:
-            dst_dir.mkdir(parents=True, exist_ok=True)
-            manifest_path.write_text("\n".join(sorted(managed)) + ("\n" if managed else ""))
+            try:
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                manifest_path.write_text("\n".join(sorted(managed)) + ("\n" if managed else ""))
+            except OSError as e:
+                result.add(provider, "skills", manifest_path, "error", str(e))
 
     @staticmethod
     def _remove_path(path: Path) -> None:

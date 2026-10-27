@@ -76,6 +76,20 @@ class ProviderMigrator:
         paths = self.PROVIDER_PATHS[provider].get(key, [])
         return self._find_first_existing(paths)
 
+    def _find_project_path(self, provider: str, key: str, project_root: Path) -> Optional[Path]:
+        """First existing read-path for a project key, resolved against
+        project_root - provider project patterns like '.claude/skills' are
+        relative and must not depend on the caller's CWD."""
+        for pattern in self.PROVIDER_PATHS.get(provider, {}).get(key, []):
+            candidate = Path(pattern)
+            if not candidate.is_absolute():
+                candidate = project_root / candidate
+            else:
+                candidate = candidate.expanduser()
+            if candidate.exists():
+                return candidate
+        return None
+
     def detect_providers(self) -> List[str]:
         """Detect which providers have legacy configs."""
         detected = []
@@ -260,10 +274,10 @@ class ProviderMigrator:
             print(f"  No new skills found in {legacy_skills}")
 
     def _import_skills_dir(self, src_dir: Path, target_root: Path, provider: str) -> int:
-        """Copy skills into target_root with MCP-style dedup: identical skills
-        are skipped, a conflicting same-name skill lands under a
-        '<name>.<provider>' alias, and the whole skill directory is copied so
-        companion files (references/, scripts/) survive the move."""
+        """Copy skills into target_root: identical and strictly-subset skills
+        are skipped, a conflicting same-name skill is quarantined under
+        skill-conflicts/<name>/<provider>/, and the whole skill directory is
+        copied so companion files (references/, scripts/) survive the move."""
         target_root.mkdir(parents=True, exist_ok=True)
         migrated = 0
         lock = SkillsLock(target_root.parent)
@@ -298,10 +312,28 @@ class ProviderMigrator:
                 provider=provider,
                 lock=lock,
             )
-        shutil.copytree(skill_dir, target)
+        self._move_stray_aside(target_root, name, target)
+        try:
+            shutil.copytree(skill_dir, target)
+        except (OSError, shutil.Error) as e:
+            print(f"  Failed to migrate skill {name}: {e}")
+            return 0
         lock.record_source(target.name, dir_hash(target), origin=f"imported:{provider}")
         print(f"  Migrated skill: {target.name}")
         return 1
+
+    def _move_stray_aside(self, target_root: Path, name: str, target: Path) -> None:
+        """A non-directory (or broken symlink) sitting at a skill's path
+        blocks the import: park it in skill-conflicts/ rather than deleting
+        or crashing on it."""
+        if not target.is_symlink() and not target.exists():
+            return
+        if target.is_dir() and not target.is_symlink():
+            return
+        stray = self._conflict_dir(target_root, name, "stray")
+        stray.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(target), str(stray))
+        print(f"  Moved stray file aside: {target} -> {stray}")
 
     @staticmethod
     def _is_subset(incoming: Path, existing: Path) -> bool:
@@ -367,8 +399,22 @@ class ProviderMigrator:
         if choice == "replace":
             displaced = self._conflict_dir(target_root, name, "unified")
             displaced.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(str(existing), str(displaced))
-            shutil.copytree(incoming, existing)
+            # Stage the incoming copy beside the store first, then swap: a
+            # copy failure must never leave the store without the skill.
+            staged = target_root / f".{name}.ai-config-staged"
+            try:
+                if staged.exists():
+                    shutil.rmtree(staged)
+                shutil.copytree(incoming, staged)
+                shutil.move(str(existing), str(displaced))
+                staged.rename(existing)
+            except (OSError, shutil.Error) as e:
+                if staged.exists():
+                    shutil.rmtree(staged, ignore_errors=True)
+                if not existing.exists() and displaced.exists():
+                    shutil.move(str(displaced), str(existing))
+                print(f"    Replace failed ({e}); kept existing")
+                return 0
             lock.record_source(name, dir_hash(existing), origin=f"imported:{provider}")
             lock.record_conflict(
                 name, provider, str(displaced), resolution=f"replaced-by-{provider}"
@@ -377,7 +423,11 @@ class ProviderMigrator:
             return 1
 
         # Copy, not move: the provider's own skills dir keeps its copy.
-        shutil.copytree(incoming, loser)
+        try:
+            shutil.copytree(incoming, loser)
+        except (OSError, shutil.Error) as e:
+            print(f"    Quarantine failed ({e}); {name} left in place")
+            return 0
         lock.record_conflict(name, provider, str(loser), resolution="kept-existing")
         print(f"    Kept existing; {provider} copy held at {loser}")
         print(f"    Resolve with: compare {loser} to {existing}, then remove the loser")
@@ -406,8 +456,13 @@ class ProviderMigrator:
                     provider=provider,
                     lock=lock,
                 )
+        self._move_stray_aside(target_root, name, target.parent)
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(skill_file, target)
+        try:
+            shutil.copy2(skill_file, target)
+        except OSError as e:
+            print(f"  Failed to migrate skill {name}: {e}")
+            return 0
         lock.record_source(
             target.parent.name, dir_hash(target.parent), origin=f"imported:{provider}"
         )
@@ -536,7 +591,7 @@ class ProviderMigrator:
 
         for provider in self.PROVIDER_PATHS.keys():
             # Migrate project config
-            project_config = self.get_legacy_path(provider, "project_config")
+            project_config = self._find_project_path(provider, "project_config", project_root)
             if project_config and project_config.exists():
                 try:
                     legacy_config = self._load_json_safe(project_config)
@@ -555,7 +610,7 @@ class ProviderMigrator:
                     pass
 
             # Migrate project MCP config
-            project_mcp = self.get_legacy_path(provider, "project_mcp")
+            project_mcp = self._find_project_path(provider, "project_mcp", project_root)
             if project_mcp and project_mcp.exists() and project_mcp.is_file():
                 try:
                     legacy_config = self._load_json_safe(project_mcp)
@@ -588,7 +643,7 @@ class ProviderMigrator:
                     pass
 
             # Migrate project local config
-            project_local = self.get_legacy_path(provider, "project_local")
+            project_local = self._find_project_path(provider, "project_local", project_root)
             if project_local and project_local.exists():
                 try:
                     legacy_config = self._load_json_safe(project_local)
@@ -609,17 +664,12 @@ class ProviderMigrator:
                     pass
 
             # Migrate project skills
-            project_skills = self.get_legacy_path(provider, "project_skills")
+            project_skills = self._find_project_path(provider, "project_skills", project_root)
             if project_skills and project_skills.exists():
                 self._import_skills_dir(project_skills, ai_dir / "skills", provider)
 
             # Migrate project rules
-            project_rules = self._find_first_existing(
-                [
-                    str(project_root / p)
-                    for p in self.PROVIDER_PATHS[provider].get("project_rules", [])
-                ]
-            )
+            project_rules = self._find_project_path(provider, "project_rules", project_root)
             if project_rules and project_rules.exists():
                 unified_rules = ai_dir / "AGENTS.md"
                 if not unified_rules.exists():

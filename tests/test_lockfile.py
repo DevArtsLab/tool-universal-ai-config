@@ -166,3 +166,15 @@ def test_dry_run_writes_no_lock(sandbox):
     env = AgentEnv()
     SyncEngine(env).sync(providers=["cursor"], dry_run=True)
     assert not (env.base / LOCK_NAME).exists()
+
+
+def test_lock_load_tolerates_malformed_sections(tmp_path):
+    """A corrupt lock section resets to empty instead of crashing later
+    lookups or status output."""
+    (tmp_path / LOCK_NAME).write_text(
+        json.dumps({"skills": ["not-a-dict"], "providers": 42, "conflicts": "x"})
+    )
+    lock = SkillsLock(tmp_path)
+    assert lock.data["skills"] == {}
+    assert lock.data["providers"] == {}
+    assert lock.data["conflicts"] == {}

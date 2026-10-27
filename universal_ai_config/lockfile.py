@@ -86,9 +86,11 @@ class SkillsLock:
             return
         if isinstance(loaded, dict):
             loaded.setdefault("version", LOCK_VERSION)
-            loaded.setdefault("skills", {})
-            loaded.setdefault("providers", {})
-            loaded.setdefault("conflicts", {})
+            # A corrupt or hand-edited section must not crash later lookups:
+            # anything that is not a dict starts over empty.
+            for key in ("skills", "providers", "conflicts"):
+                if not isinstance(loaded.get(key), dict):
+                    loaded[key] = {}
             self.data = loaded
 
     def save(self) -> None:

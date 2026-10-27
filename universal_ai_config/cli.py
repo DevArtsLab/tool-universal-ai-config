@@ -11,7 +11,7 @@ from . import __version__
 from .environment import AgentEnv, find_project_root
 from .config import UnifiedConfig, ConfigError
 from .lockfile import LOCK_NAME, SkillsLock, dir_hash
-from .migration import ProviderMigrator, MigrationError
+from .migration import ProviderMigrator, MigrationError, SKILL_CONFLICTS_DIR
 from .providers import PROVIDERS, expand
 from .sync import SyncEngine
 
@@ -253,63 +253,94 @@ class CLI:
             print(f"\nNot in a project directory")
 
     def _print_skills_lock(self) -> None:
-        """Summarize the skills lockfile: source freshness plus per-provider
-        sync state (in sync / stale / drifted / missing) for recorded pushes."""
-        lock_path = self.env.base / LOCK_NAME
+        """Summarize skills lockfiles (global and project): source freshness
+        plus per-provider sync state (in sync / stale / drifted / missing)
+        for recorded pushes."""
+        self._print_lock_section(self.env.base, self.env.skills, project_root=None)
+        project_root = find_project_root()
+        if project_root:
+            self._print_lock_section(
+                project_root / ".ai", project_root / ".ai" / "skills", project_root
+            )
+
+    def _print_lock_section(
+        self, base: Path, unified_skills: Path, project_root: Optional[Path]
+    ) -> None:
+        lock_path = base / LOCK_NAME
         if not lock_path.is_file():
             return
-        lock = SkillsLock(self.env.base)
+        lock = SkillsLock(base)
         pruned = lock.prune_conflicts()
         sources_changed = False
-        if self.env.skills.is_dir():
-            sources_changed = lock.reconcile_sources(self.env.skills)
+        if unified_skills.is_dir():
+            sources_changed = lock.reconcile_sources(unified_skills)
         if pruned or sources_changed:
             lock.save()
         skills = lock.data.get("skills", {})
         providers = lock.data.get("providers", {})
-        print(f"\nSkills lock: {len(skills)} tracked ({lock_path})")
+        label = "Project skills lock" if project_root else "Skills lock"
+        tracked = len(skills) if isinstance(skills, dict) else 0
+        print(f"\n{label}: {tracked} tracked ({lock_path})")
 
         # Per-provider state for each recorded push. Live-hashes the provider
         # copy so locally edited skills surface as drifted.
-        for prov_name, prov_data in sorted(providers.items()):
-            receipts = prov_data.get("skills", {})
-            if not receipts:
-                continue
-            spec = PROVIDERS.get(prov_name)
-            skills_dir = expand(spec.user.skills_dir) if spec and spec.user.skills_dir else None
-            counts = {"in sync": 0, "stale": 0, "drifted": 0, "missing": 0}
-            flagged = []
-            for name, receipt in sorted(receipts.items()):
-                pushed = receipt.get("hash")
-                # Live-hash the unified copy: the recorded source hash only
-                # refreshes on sync, so it cannot flag "stale" on its own.
-                unified_dir = self.env.skills / name
-                source = dir_hash(unified_dir) if unified_dir.is_dir() else None
-                target = (skills_dir / name) if skills_dir else None
-                if target is None or not target.is_dir():
-                    state = "missing"
+        if isinstance(providers, dict):
+            for prov_name, prov_data in sorted(providers.items()):
+                if not isinstance(prov_data, dict):
+                    continue
+                receipts = prov_data.get("skills", {})
+                if not isinstance(receipts, dict) or not receipts:
+                    continue
+                spec = PROVIDERS.get(prov_name)
+                if project_root:
+                    target_dir = (
+                        project_root / spec.project.skills_dir
+                        if spec and spec.project.skills_dir
+                        else None
+                    )
                 else:
-                    live = dir_hash(target)
-                    if live != pushed:
-                        state = "drifted"
-                    elif source is not None and pushed != source:
-                        state = "stale"
+                    target_dir = (
+                        expand(spec.user.skills_dir) if spec and spec.user.skills_dir else None
+                    )
+                counts = {"in sync": 0, "stale": 0, "drifted": 0, "missing": 0}
+                flagged = []
+                for name, receipt in sorted(receipts.items()):
+                    if not isinstance(receipt, dict):
+                        continue
+                    pushed = receipt.get("hash")
+                    # Live-hash the unified copy: the recorded source hash only
+                    # refreshes on sync, so it cannot flag "stale" on its own.
+                    unified_dir = unified_skills / name
+                    source = dir_hash(unified_dir) if unified_dir.is_dir() else None
+                    target = (target_dir / name) if target_dir else None
+                    if target is None or not target.is_dir():
+                        state = "missing"
                     else:
-                        state = "in sync"
-                counts[state] += 1
-                if state != "in sync":
-                    flagged.append(f"{name} ({state})")
-            summary = ", ".join(f"{v} {k}" for k, v in counts.items() if v)
-            print(f"  {prov_name}: {summary}")
-            for item in flagged:
-                print(f"    - {item}")
+                        live = dir_hash(target)
+                        if live != pushed:
+                            state = "drifted"
+                        elif source is not None and pushed != source:
+                            state = "stale"
+                        else:
+                            state = "in sync"
+                    counts[state] += 1
+                    if state != "in sync":
+                        flagged.append(f"{name} ({state})")
+                summary = ", ".join(f"{v} {k}" for k, v in counts.items() if v)
+                print(f"  {prov_name}: {summary}")
+                for item in flagged:
+                    print(f"    - {item}")
 
         conflicts = lock.data.get("conflicts", {})
-        if conflicts:
-            total = sum(len(v) for v in conflicts.values())
-            print(f"\nSkill conflicts: {total} recorded ({self.env.base}/skill-conflicts/)")
+        if isinstance(conflicts, dict) and conflicts:
+            total = sum(len(v) for v in conflicts.values() if isinstance(v, list))
+            print(f"\nSkill conflicts: {total} recorded ({base / SKILL_CONFLICTS_DIR}/)")
             for name, entries in sorted(conflicts.items()):
+                if not isinstance(entries, list) or not entries:
+                    continue
                 latest = entries[-1]
+                if not isinstance(latest, dict):
+                    continue
                 where = latest.get("quarantinedTo") or "unresolved"
                 print(f"  {name}: {latest['resolution']} from {latest['provider']} -> {where}")
 
@@ -358,7 +389,12 @@ class CLI:
         if gitignore.exists():
             gitignore_content = gitignore.read_text()
 
-        local_configs = [".ai/config.local.json", ".ai/mcp-config.local.json"]
+        local_configs = [
+            ".ai/config.local.json",
+            ".ai/mcp-config.local.json",
+            ".ai/.ai-config-lock.json",
+            ".ai/skill-conflicts/",
+        ]
 
         additions = []
         for local_config in local_configs:

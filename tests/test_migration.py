@@ -370,3 +370,34 @@ def test_detect_providers_includes_new_ones(sandbox):
     detected = ProviderMigrator(AgentEnv()).detect_providers()
     assert "cursor" in detected
     assert "codex" in detected
+
+
+def test_migrate_project_resolves_against_project_root(sandbox, tmp_path, monkeypatch):
+    """Provider project paths are relative to the project, not the CWD."""
+    project = tmp_path / "proj"
+    (project / ".git").mkdir(parents=True)
+    (project / ".devin").mkdir()
+    (project / ".devin" / "config.json").write_text('{"x": 1}')
+    monkeypatch.chdir(tmp_path)  # CWD deliberately outside the project
+
+    ProviderMigrator(AgentEnv()).migrate_project(project)
+
+    assert (project / ".ai" / "config.json").exists()
+
+
+def test_migrate_stray_file_at_skill_path_moved_aside(sandbox):
+    """A non-directory blocking a skill's path is parked in
+    skill-conflicts/, not crashed on or deleted."""
+    env = AgentEnv()
+    stray = env.skills / "demo"
+    stray.write_text("junk")
+    src = sandbox / "provider-skills"
+    incoming = src / "demo"
+    incoming.mkdir(parents=True)
+    (incoming / "SKILL.md").write_text("# Demo\n")
+
+    count = ProviderMigrator(env)._import_skills_dir(src, env.skills, "devin")
+
+    assert count == 1
+    assert (env.skills / "demo" / "SKILL.md").is_file()
+    assert (env.base / "skill-conflicts" / "demo" / "stray").is_file()

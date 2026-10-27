@@ -641,3 +641,78 @@ def test_sync_rules_copy_mode_writes_managed_block(sandbox):
     target = sandbox / ".claude" / "CLAUDE.md"
     assert not target.is_symlink()
     assert "Be nice." in target.read_text()
+
+
+def test_sync_rules_never_writes_through_link_to_unified(sandbox):
+    """A provider rules file linked to the unified file must never be
+    written through - even when the unified content stops being linkable
+    (e.g. it picked up managed markers), the master file is untouched."""
+    claude = sandbox / ".claude"
+    claude.mkdir()
+    env = AgentEnv()
+    (env.rules).write_text(f"# Rules\n\n{BLOCK_BEGIN}\nold junk\n{BLOCK_END}\n")
+    target = claude / "CLAUDE.md"
+    target.symlink_to(env.rules.resolve())
+
+    before = (env.rules).read_text()
+    SyncEngine(env).sync(providers=["claude"])
+
+    assert (env.rules).read_text() == before
+    assert not target.is_symlink()
+
+
+def test_sync_rules_user_symlink_content_preserved(sandbox):
+    """A rules file that is a symlink to the user's own document keeps its
+    content: the link becomes a real file holding that text plus the
+    managed block, and the original target is untouched."""
+    claude = sandbox / ".claude"
+    claude.mkdir()
+    mine = sandbox / "myrules.md"
+    mine.write_text("# My own rules\n")
+    target = claude / "CLAUDE.md"
+    target.symlink_to(mine.resolve())
+    env = AgentEnv()
+    (env.rules).write_text("# Rules\n\n- Be nice.\n")
+
+    SyncEngine(env).sync(providers=["claude"])
+
+    assert mine.read_text() == "# My own rules\n"
+    assert not target.is_symlink()
+    text = target.read_text()
+    assert "My own rules" in text
+    assert "Be nice." in text
+
+
+def test_sync_skills_link_failure_falls_back_to_copy(sandbox, monkeypatch):
+    """Platforms that cannot symlink (Windows without dev mode) get a real
+    copy instead of an aborted sync."""
+    (sandbox / ".cursor").mkdir()
+
+    def boom(self, *args, **kwargs):
+        raise OSError("privilege not held")
+
+    monkeypatch.setattr(Path, "symlink_to", boom)
+    result = SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    target = sandbox / ".cursor" / "skills" / "demo-skill"
+    assert target.is_dir() and not target.is_symlink()
+    assert (target / "SKILL.md").read_text() == "# Demo\n"
+    assert all(a.status != "error" for a in result.actions)
+
+
+def test_sync_rules_link_failure_writes_managed_block(sandbox, monkeypatch):
+    """When symlink creation is impossible, rules fall back to the managed
+    block rather than failing."""
+    (sandbox / ".claude").mkdir()
+    env = AgentEnv()
+    (env.rules).write_text("# Rules\n\n- Be nice.\n")
+
+    def boom(self, *args, **kwargs):
+        raise OSError("privilege not held")
+
+    monkeypatch.setattr(Path, "symlink_to", boom)
+    SyncEngine(env).sync(providers=["claude"])
+
+    target = sandbox / ".claude" / "CLAUDE.md"
+    assert not target.is_symlink()
+    assert "Be nice." in target.read_text()
