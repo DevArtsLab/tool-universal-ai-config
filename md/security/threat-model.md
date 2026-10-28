@@ -1,6 +1,8 @@
 # Threat model: DevArtsLab/tool-universal-ai-config (`ai-config`)
 
-Status: **draft from code**. The user has not answered the threat-model questions yet. Everything below comes from reading the code, so it is not a user decision.
+Extends the DevArts Lab baseline threat model (`DevArtsLab/devartslab-foundation` `md/security/LAB-THREAT-MODEL.md`) for this repository; this file wins where they differ.
+
+Status: **draft from code**. Repository-specific questions below are still open; the lab-wide decisions in the baseline (all assets weighted equally, shared multi-user machines in scope for local tools, no accepted risks) apply here.
 
 ## System overview
 `ai-config` is a local Python CLI (`universal_ai_config/cli.py`, entry point `ai-config`) that a developer runs as their own OS user. It keeps one "unified" store under `~/.agents/` (or `$AGENT_CONFIG_HOME`): `config/config.json`, `config/mcp-config.json`, `config/AGENTS.md` and `skills/*/SKILL.md`. It translates that store to and from the native config files of AI coding tools (Claude, Windsurf, Devin, Cursor, Zed, VS Code, Codex, Continue, ... listed in `providers.py` `PROVIDERS`). There is no network service and no server. It ships through PyPI (`.github/workflows/publish.yml`, trusted publishing), PyInstaller binaries on GitHub Releases, and `install.sh`/`uninstall.sh`, which are run with `curl ... | bash`.
