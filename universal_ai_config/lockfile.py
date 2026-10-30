@@ -182,8 +182,12 @@ class SkillsLock:
 
     # ---- provider section ----
 
-    def record_sync(self, provider: str, name: str, content_hash: str) -> None:
-        """Record that content_hash was pushed to provider for skill name."""
+    def record_sync(
+        self, provider: str, name: str, content_hash: str, mode: str = "link"
+    ) -> None:
+        """Record that content_hash was pushed to provider for skill name.
+        mode is how it was materialized ("link" or "copy") so audits can
+        tell a pointer from a duplicated copy."""
         prov = self.data["providers"].get(provider)
         if not isinstance(prov, dict):
             prov = {}
@@ -192,7 +196,7 @@ class SkillsLock:
         if not isinstance(skills, dict):
             skills = {}
             prov["skills"] = skills
-        skills[name] = {"hash": content_hash, "syncedAt": _now()}
+        skills[name] = {"hash": content_hash, "syncedAt": _now(), "mode": mode}
 
     def provider_hash(self, provider: str, name: str) -> Optional[str]:
         """Hash last pushed to provider, or None if never recorded."""

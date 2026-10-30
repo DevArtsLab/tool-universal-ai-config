@@ -264,7 +264,7 @@ Get configuration for a specific provider.
 ai-config get-config devin
 ```
 
-### `ai-config sync [--provider NAME] [--project] [--all] [--prune] [--copy] [--dry-run]`
+### `ai-config sync [--provider NAME] [--project] [--all] [--prune] [--dry-run]`
 
 Write the unified config back to each provider's native files: MCP servers
 (translated to each provider's format: `mcpServers`, `servers`,
@@ -279,14 +279,14 @@ ai-config sync --provider cursor   # one provider, explicit
 ai-config sync --all          # every known provider, explicit
 ai-config sync --project      # project-level targets (.cursor/, .vscode/, ...)
 ai-config sync --prune        # also remove MCP servers no longer in scope
-ai-config sync --copy         # copy skills/rules instead of symlinking
 ```
 
-Skills sync defaults to **symlinks**: each provider's skills dir links to
-the unified copy, so a skill edited in any provider edits the single
-source. A provider rules file that holds only the unified `AGENTS.md`
-content is linked the same way. Pass `--copy` for plain copies, or when a
-provider cannot follow symlinks.
+Skills sync is **symlink-only**: each provider's skills dir links to the
+unified copy, so a skill edited in any provider edits the single source
+and nothing is ever duplicated. If a platform cannot create a symlink,
+sync reports an error rather than silently copying content. A provider
+rules file that holds only the unified `AGENTS.md` content is linked the
+same way.
 
 Bare `ai-config sync` only writes to providers that opted in via
 `"providers.<name>.sync": true`. Providers can also read the unified config

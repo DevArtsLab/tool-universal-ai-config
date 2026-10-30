@@ -160,8 +160,6 @@ class SyncEngine:
         all_providers: bool = False,
         prune: bool = False,
         dry_run: bool = False,
-        link_skills: bool = True,
-        link_rules: bool = True,
     ) -> SyncResult:
         result = SyncResult()
 
@@ -228,8 +226,6 @@ class SyncEngine:
                 prune,
                 dry_run,
                 lock,
-                link_skills,
-                link_rules,
             )
 
         if lock and skills_dir.exists() and not dry_run:
@@ -258,8 +254,6 @@ class SyncEngine:
         prune: bool,
         dry_run: bool,
         lock: Optional[SkillsLock] = None,
-        link_skills: bool = True,
-        link_rules: bool = True,
     ) -> None:
         # Config file: merge provider-specific settings into native config.
         # Unified-namespace keys never belong in a native config file.
@@ -315,7 +309,6 @@ class SyncEngine:
                     result,
                     dry_run,
                     link_source=self.env.rules if not base else None,
-                    link=link_rules,
                 )
 
         # Skills
@@ -332,7 +325,6 @@ class SyncEngine:
                     prune,
                     dry_run,
                     lock,
-                    link_skills,
                 )
 
     def _resolve(self, path_str: Optional[str], base: Optional[Path]) -> Optional[Path]:
@@ -479,7 +471,6 @@ class SyncEngine:
         result: SyncResult,
         dry_run: bool,
         link_source: Optional[Path] = None,
-        link: bool = True,
     ) -> None:
         # The exported text must never carry managed-block markers: a unified
         # rules file that acquired them through a buggy import would otherwise
@@ -490,7 +481,7 @@ class SyncEngine:
         # source file (user scope, no project merge), link the provider file
         # to it instead of embedding a copy. A file with unmanaged content
         # falls back to the managed block so nothing local is hidden.
-        if link and mode == "file" and link_source is not None:
+        if mode == "file" and link_source is not None:
             src = Path(link_source)
             try:
                 linkable = content.strip() == src.read_text().strip()
@@ -561,15 +552,16 @@ class SyncEngine:
         prune: bool,
         dry_run: bool,
         lock: Optional[SkillsLock] = None,
-        link: bool = True,
     ) -> None:
         """Link whole skill directories (SKILL.md plus companion files) into
-        the provider, or copy them when link is False. A manifest file records
-        what ai-config wrote so --prune can remove stale managed skills
-        without touching user-managed ones. The central lockfile records the
-        pushed content hash per provider, so a later sync can tell a locally
-        edited copy (drift) from an outdated push and back it up instead of
-        deleting it silently."""
+        the provider. Materialization is symlink-only: the unified store
+        stays the single copy, so there is nothing to drift or diverge. A
+        symlink failure is a loud error, never a silent copy. A manifest
+        file records what ai-config wrote so --prune can remove stale
+        managed skills without touching user-managed ones. The central
+        lockfile records the pushed content hash per provider, so a later
+        sync can tell a locally edited copy (drift) from an outdated push
+        and back it up instead of deleting it silently."""
         manifest_path = dst_dir / SKILLS_MANIFEST
         managed = set(manifest_path.read_text().split()) if manifest_path.is_file() else set()
         keep = set(names)
@@ -585,33 +577,28 @@ class SyncEngine:
                 if dirs_equal(src, target):
                     managed.add(name)
                     if lock and not dry_run:
-                        lock.record_sync(provider, name, src_hash)
+                        lock.record_sync(provider, name, src_hash, mode="link")
                     continue
                 if dry_run:
-                    verb = "link" if link else "copy"
-                    result.add(provider, "skills", target, "planned", f"would {verb} {name}")
+                    result.add(provider, "skills", target, "planned", f"would link {name}")
                     managed.add(name)
                     continue
                 self._displace_target(
                     dst_dir, target, name, provider, lock, result, trusted=name in managed
                 )
                 target.parent.mkdir(parents=True, exist_ok=True)
-                linked = False
-                if link:
-                    try:
-                        target.symlink_to(src.resolve(), target_is_directory=True)
-                        linked = True
-                    except OSError:
-                        # Platform cannot link (Windows without dev mode):
-                        # degrade to a copy rather than aborting the sync.
-                        pass
-                if not linked:
-                    shutil.copytree(src, target)
-                detail = name if linked or not link else f"{name} (copied: symlink failed)"
-                result.add(provider, "skills", target, "written", detail)
+                try:
+                    target.symlink_to(src.resolve(), target_is_directory=True)
+                except OSError as e:
+                    # Link-only: no copy fallback. A platform that cannot
+                    # link surfaces a loud error instead of silently
+                    # duplicating skill content.
+                    result.add(provider, "skills", target, "error", f"symlink failed: {e}")
+                    continue
+                result.add(provider, "skills", target, "written", name)
                 managed.add(name)
                 if lock:
-                    lock.record_sync(provider, name, src_hash)
+                    lock.record_sync(provider, name, src_hash, mode="link")
             except (OSError, shutil.Error) as e:
                 # One bad skill must not abort the whole provider sync.
                 result.add(provider, "skills", target, "error", str(e))

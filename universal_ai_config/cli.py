@@ -523,7 +523,6 @@ class CLI:
         all_providers=False,
         prune=False,
         dry_run=False,
-        copy_skills=False,
     ) -> None:
         """Write unified config back to provider-native locations."""
         engine = SyncEngine(self.env)
@@ -537,8 +536,6 @@ class CLI:
             all_providers=all_providers,
             prune=prune,
             dry_run=dry_run,
-            link_skills=not copy_skills,
-            link_rules=not copy_skills,
         )
 
         if not result.actions:
@@ -667,14 +664,6 @@ def main():
     sync_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be written without writing"
     )
-    sync_parser.add_argument(
-        "--copy",
-        dest="copy_skills",
-        action="store_true",
-        help="Copy skills and rules instead of symlinking to the unified "
-        "store (default: symlink, so providers share one source)",
-    )
-
     args = parser.parse_args()
 
     if not args.command:
@@ -710,7 +699,6 @@ def main():
             all_providers=args.all_providers,
             prune=args.prune,
             dry_run=args.dry_run,
-            copy_skills=args.copy_skills,
         )
 
 

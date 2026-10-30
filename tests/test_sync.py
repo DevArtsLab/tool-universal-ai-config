@@ -357,7 +357,7 @@ def test_sync_never_exports_markers_inside_block(sandbox):
 
 
 def test_sync_skills_copies_companion_files(sandbox):
-    """Whole skill directories are copied, not just SKILL.md."""
+    """Whole skill directories are linked, not just SKILL.md."""
     (sandbox / ".cursor").mkdir()
     skill = AgentEnv().skills / "demo-skill"
     (skill / "references").mkdir(parents=True)
@@ -623,15 +623,21 @@ def test_sync_skills_symlinks_by_default(sandbox):
     assert (target / "SKILL.md").read_text() == "# Demo\n"
 
 
-def test_sync_skills_copy_mode_writes_real_dirs(sandbox):
-    """--copy fallback: real dir, not a link."""
+def test_sync_skills_symlink_failure_is_error(sandbox, monkeypatch):
+    """Link-only: a failed symlink is a loud error, never a silent copy."""
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
-    SyncEngine(env).sync(providers=["cursor"], link_skills=False)
+
+    def no_link(self, target, target_is_directory=False):
+        raise OSError("symlink not permitted")
+
+    monkeypatch.setattr(Path, "symlink_to", no_link)
+    result = SyncEngine(env).sync(providers=["cursor"])
 
     target = sandbox / ".cursor" / "skills" / "demo-skill"
-    assert target.is_dir() and not target.is_symlink()
-    assert (target / "SKILL.md").read_text() == "# Demo\n"
+    assert not target.exists() and not target.is_symlink()
+    errors = [a for a in result.actions if a.status == "error"]
+    assert any("symlink failed" in a.detail for a in errors)
 
 
 def test_sync_skills_relinks_drifted_real_dir(sandbox):
@@ -680,18 +686,6 @@ def test_sync_rules_unmanaged_content_keeps_managed_block(sandbox):
     assert "Be nice." in text
 
 
-def test_sync_rules_copy_mode_writes_managed_block(sandbox):
-    """--copy disables linking: managed block written even when file is clean."""
-    (sandbox / ".claude").mkdir()
-    env = AgentEnv()
-    (env.rules).write_text("# Rules\n\n- Be nice.\n")
-    SyncEngine(env).sync(providers=["claude"], link_rules=False)
-
-    target = sandbox / ".claude" / "CLAUDE.md"
-    assert not target.is_symlink()
-    assert "Be nice." in target.read_text()
-
-
 def test_sync_rules_never_writes_through_link_to_unified(sandbox):
     """A provider rules file linked to the unified file must never be
     written through - even when the unified content stops being linkable
@@ -730,23 +724,6 @@ def test_sync_rules_user_symlink_content_preserved(sandbox):
     text = target.read_text()
     assert "My own rules" in text
     assert "Be nice." in text
-
-
-def test_sync_skills_link_failure_falls_back_to_copy(sandbox, monkeypatch):
-    """Platforms that cannot symlink (Windows without dev mode) get a real
-    copy instead of an aborted sync."""
-    (sandbox / ".cursor").mkdir()
-
-    def boom(self, *args, **kwargs):
-        raise OSError("privilege not held")
-
-    monkeypatch.setattr(Path, "symlink_to", boom)
-    result = SyncEngine(AgentEnv()).sync(providers=["cursor"])
-
-    target = sandbox / ".cursor" / "skills" / "demo-skill"
-    assert target.is_dir() and not target.is_symlink()
-    assert (target / "SKILL.md").read_text() == "# Demo\n"
-    assert all(a.status != "error" for a in result.actions)
 
 
 def test_sync_rules_link_failure_writes_managed_block(sandbox, monkeypatch):
