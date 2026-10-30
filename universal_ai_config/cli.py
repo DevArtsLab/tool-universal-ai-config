@@ -6,11 +6,35 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, Optional
-from .environment import AgentEnv, find_project_root
+from typing import Dict, List, Optional
+from . import __version__
+from .environment import AgentEnv, find_project_root, project_dir_name, project_dir_names
 from .config import UnifiedConfig, ConfigError
-from .migration import ProviderMigrator, MigrationError
+from .lockfile import LOCK_NAME, SkillsLock, dir_hash
+from .migration import ProviderMigrator, MigrationError, SKILL_CONFLICTS_DIR
+from .providers import PROVIDERS, expand
 from .sync import SyncEngine
+
+
+def _pick_destination(default: Path) -> Path:
+    """Interactive destination pick for migrate. Enter or "1" keeps the
+    default user store; "2" accepts a custom path. Non-answers (EOF,
+    Ctrl-C, empty path) also keep the default."""
+    print("\nDestination for migrated config:")
+    print(f"  1) {default}  (default user store)")
+    print("  2) Enter a path")
+    try:
+        choice = input("Choice [1]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return default
+    if choice == "2":
+        try:
+            raw = input("Path: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return default
+        if raw:
+            return Path(raw).expanduser()
+    return default
 
 
 class CLI:
@@ -25,9 +49,13 @@ class CLI:
         """Initialize new unified configuration structure."""
         print("Initializing universal AI configuration...")
 
-        if fresh and self.env.config.exists():
-            print(f"Removing existing config at: {self.env.config}")
-            shutil.rmtree(self.env.config)
+        if fresh:
+            if self.env.config.exists():
+                print(f"Removing existing config at: {self.env.config}")
+                shutil.rmtree(self.env.config)
+            master_rules = self.env.base / "AGENTS.md"
+            if master_rules.exists():
+                master_rules.unlink()
 
         # Create directory structure
         created = self.env.initialize_dirs()
@@ -40,8 +68,15 @@ class CLI:
             self.config.save_unified(default_config)
             print(f"  Created: {self.config.unified_config_path}")
 
+        # One-time relocation: rules belong at the base, not under config/
+        legacy_rules = self.env.config / "AGENTS.md"
+        master_rules = self.env.base / "AGENTS.md"
+        if legacy_rules.exists() and not master_rules.exists():
+            legacy_rules.rename(master_rules)
+            print(f"  Moved rules to: {master_rules}")
+
         # Create default AGENTS.md
-        agents_md = self.env.config / "AGENTS.md"
+        agents_md = self.env.rules
         if not agents_md.exists():
             agents_md.write_text(
                 "# Universal AI Configuration\n\n## Global Rules\n\nAdd your global AI agent rules here.\n"
@@ -57,35 +92,76 @@ class CLI:
         print(f"Config directory: {self.env.config}")
 
     def migrate(
-        self, provider: Optional[str] = None, project: bool = False, all_projects: bool = False
+        self,
+        provider: Optional[str] = None,
+        project: bool = False,
+        all_projects: bool = False,
+        interactive: Optional[bool] = None,
+        reconcile_aliases: bool = False,
+        dest: Optional[str] = None,
     ) -> None:
         """Migrate existing provider configurations."""
         print("Starting migration...")
 
+        if interactive is not None:
+            self.migrator.interactive = interactive
+
+        if dest and project:
+            print(
+                "Error: --dest does not apply to --project; "
+                "the project .agents/ dir is the destination"
+            )
+            sys.exit(1)
+
+        # Destination: explicit --dest wins; an interactive pick runs when
+        # stdin is a TTY (the migrate default); --no-interactive silently
+        # keeps the default user store so scripts never block.
+        env = self.env
+        migrator = self.migrator
+        target = Path(dest).expanduser() if dest else None
+        if target is None and not project and migrator.interactive:
+            target = _pick_destination(env.base)
+        if target is not None and target.resolve() != env.base.resolve():
+            env = AgentEnv(base=target)
+            env.initialize_dirs()
+            migrator = ProviderMigrator(env, interactive=migrator.interactive)
+            print(f"Destination: {env.base}")
+
+        if reconcile_aliases:
+            if provider or project or all_projects:
+                print(
+                    "Error: --reconcile-aliases cannot combine with a provider "
+                    "argument, --project, or --all-projects"
+                )
+                sys.exit(1)
+            moved = migrator.reconcile_skill_aliases(env.skills)
+            print(f"\n✓ Reconciled {moved} skill alias(es) into {env.base}/skill-conflicts/")
+            return
+
         if all_projects:
             # Scan all projects and migrate their skills to global
-            self.migrator.migrate_all_project_skills()
+            migrator.migrate_all_project_skills()
         elif project:
             # Migrate project configs
             project_root = find_project_root()
             if not project_root:
-                print("Error: Not in a project directory (no .git or .ai found)")
+                print("Error: Not in a project directory (no .git, .jj, or .agents/.ai found)")
                 return
 
             print(f"Migrating project at: {project_root}")
-            self.migrator.migrate_project(project_root)
+            migrator.migrate_project(project_root)
         else:
             # Migrate user configs
             if provider:
                 # Migrate specific provider
                 try:
-                    self.migrator.migrate_provider(provider)
+                    migrator.migrate_provider(provider)
                 except MigrationError as e:
                     print(f"Error: {e}")
                     sys.exit(1)
             else:
                 # Migrate all detected providers
-                results = self.migrator.migrate_all()
+                results = migrator.migrate_all()
                 if not results:
                     print("No legacy configurations found to migrate")
                     return
@@ -144,7 +220,7 @@ class CLI:
         # Check project config if in project
         project_root = find_project_root()
         if project_root:
-            ai_dir = project_root / ".ai"
+            ai_dir = project_root / project_dir_name(project_root)
             if ai_dir.exists():
                 print(f"  ✓ Project config: {ai_dir}")
 
@@ -210,33 +286,136 @@ class CLI:
             print(f"\n✗ Unified config not found")
             print(f"Run 'ai-config init' to create it")
 
+        self._print_skills_lock()
+
         # Project status
         project_root = find_project_root()
         if project_root:
-            ai_dir = project_root / ".ai"
+            ai_dir = project_root / project_dir_name(project_root)
             print(f"\n✓ Project detected: {project_root}")
             if ai_dir.exists():
                 print(f"  Project config: {ai_dir}")
             else:
-                print(f"  No .ai/ directory in project")
+                print(f"  No .agents/ directory in project")
                 print(f"  Run 'ai-config init-project' to create it")
         else:
             print(f"\nNot in a project directory")
 
-    def init_project(self) -> None:
-        """Initialize .ai/ directory in current project."""
+    def _print_skills_lock(self) -> None:
+        """Summarize skills lockfiles (global and project): source freshness
+        plus per-provider sync state (in sync / stale / drifted / missing)
+        for recorded pushes."""
+        self._print_lock_section(self.env.base, self.env.skills, project_root=None)
+        project_root = find_project_root()
+        if project_root:
+            self._print_lock_section(
+                project_root / project_dir_name(project_root),
+                project_root / project_dir_name(project_root) / "skills",
+                project_root,
+            )
+
+    def _print_lock_section(
+        self, base: Path, unified_skills: Path, project_root: Optional[Path]
+    ) -> None:
+        lock_path = base / LOCK_NAME
+        if not lock_path.is_file():
+            return
+        lock = SkillsLock(base)
+        pruned = lock.prune_conflicts()
+        sources_changed = False
+        if unified_skills.is_dir():
+            sources_changed = lock.reconcile_sources(unified_skills)
+        if pruned or sources_changed:
+            lock.save()
+        skills = lock.data.get("skills", {})
+        providers = lock.data.get("providers", {})
+        label = "Project skills lock" if project_root else "Skills lock"
+        tracked = len(skills) if isinstance(skills, dict) else 0
+        print(f"\n{label}: {tracked} tracked ({lock_path})")
+
+        # Per-provider state for each recorded push. Live-hashes the provider
+        # copy so locally edited skills surface as drifted.
+        if isinstance(providers, dict):
+            for prov_name, prov_data in sorted(providers.items()):
+                if not isinstance(prov_data, dict):
+                    continue
+                receipts = prov_data.get("skills", {})
+                if not isinstance(receipts, dict) or not receipts:
+                    continue
+                spec = PROVIDERS.get(prov_name)
+                if project_root:
+                    target_dir = (
+                        project_root / spec.project.skills_dir
+                        if spec and spec.project.skills_dir
+                        else None
+                    )
+                else:
+                    target_dir = (
+                        expand(spec.user.skills_dir) if spec and spec.user.skills_dir else None
+                    )
+                counts = {"in sync": 0, "stale": 0, "drifted": 0, "missing": 0}
+                flagged = []
+                for name, receipt in sorted(receipts.items()):
+                    if not isinstance(receipt, dict):
+                        continue
+                    pushed = receipt.get("hash")
+                    # Live-hash the unified copy: the recorded source hash only
+                    # refreshes on sync, so it cannot flag "stale" on its own.
+                    unified_dir = unified_skills / name
+                    source = dir_hash(unified_dir) if unified_dir.is_dir() else None
+                    target = (target_dir / name) if target_dir else None
+                    if target is None or not target.is_dir():
+                        state = "missing"
+                    else:
+                        live = dir_hash(target)
+                        if live != pushed:
+                            state = "drifted"
+                        elif source is not None and pushed != source:
+                            state = "stale"
+                        else:
+                            state = "in sync"
+                    counts[state] += 1
+                    if state != "in sync":
+                        flagged.append(f"{name} ({state})")
+                summary = ", ".join(f"{v} {k}" for k, v in counts.items() if v)
+                print(f"  {prov_name}: {summary}")
+                for item in flagged:
+                    print(f"    - {item}")
+
+        conflicts = lock.data.get("conflicts", {})
+        if isinstance(conflicts, dict) and conflicts:
+            total = sum(len(v) for v in conflicts.values() if isinstance(v, list))
+            print(f"\nSkill conflicts: {total} recorded ({base / SKILL_CONFLICTS_DIR}/)")
+            for name, entries in sorted(conflicts.items()):
+                if not isinstance(entries, list) or not entries:
+                    continue
+                latest = entries[-1]
+                if not isinstance(latest, dict):
+                    continue
+                where = latest.get("quarantinedTo") or "unresolved"
+                print(f"  {name}: {latest['resolution']} from {latest['provider']} -> {where}")
+
+    def init_project(self, template: Optional[str] = None) -> None:
+        """Initialize .agents/ directory in current project (legacy .ai/ kept working)."""
         project_root = find_project_root()
         if not project_root:
             print("Error: Not in a git repository")
             print("Initialize a git repository first, or run in an existing project")
             sys.exit(1)
 
-        ai_dir = project_root / ".ai"
-        if ai_dir.exists():
-            print(f"Project already initialized: {ai_dir}")
+        if template:
+            self._init_project_from_template(project_root, Path(template).expanduser())
             return
 
-        print(f"Initializing .ai/ in {project_root}")
+        names = project_dir_names()
+        for name in names:
+            existing = project_root / name
+            if existing.exists():
+                print(f"Project already initialized: {existing}")
+                return
+
+        ai_dir = project_root / names[0]
+        print(f"Initializing {ai_dir.name}/ in {project_root}")
         ai_dir.mkdir()
 
         # Create project config
@@ -268,13 +447,88 @@ class CLI:
         if gitignore.exists():
             gitignore_content = gitignore.read_text()
 
-        local_configs = [".ai/config.local.json", ".ai/mcp-config.local.json"]
+        dir_name = ai_dir.name
+        local_configs = [
+            f"{dir_name}/config.local.json",
+            f"{dir_name}/mcp-config.local.json",
+            f"{dir_name}/.ai-config-lock.json",
+            f"{dir_name}/skill-conflicts/",
+        ]
 
         additions = []
         for local_config in local_configs:
             if local_config not in gitignore_content:
                 additions.append(local_config)
 
+        if additions:
+            with open(gitignore, "a") as f:
+                f.write("\n# AI local configs\n")
+                for addition in additions:
+                    f.write(f"{addition}\n")
+            print(f"  Updated .gitignore")
+
+        print("\n✓ Project initialization complete")
+
+    def _init_project_from_template(self, project_root: Path, template_dir: Path) -> None:
+        """Copy a template directory into the project root.
+
+        {{PROJECT_NAME}} is substituted in text files. Existing files are
+        never overwritten. The project config dir (.agents/ or .ai/) and
+        gitignore entries are still ensured afterwards.
+        """
+        template_dir = template_dir.resolve()
+        if not template_dir.is_dir():
+            print(f"Error: template directory not found: {template_dir}")
+            sys.exit(1)
+
+        created: List[str] = []
+        skipped: List[str] = []
+        skip_parts = {".git", ".jj", ".svn", ".hg"}
+        for src in sorted(template_dir.rglob("*")):
+            rel = src.relative_to(template_dir)
+            if (
+                any(p in skip_parts for p in rel.parts)
+                or src.name == ".DS_Store"
+                or src.is_symlink()
+            ):
+                continue
+            dst = project_root / rel
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+                continue
+            if dst.exists():
+                skipped.append(str(rel))
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                text = src.read_text()
+            except UnicodeDecodeError:
+                shutil.copy2(src, dst)
+            else:
+                dst.write_text(text.replace("{{PROJECT_NAME}}", project_root.name))
+            created.append(str(rel))
+
+        for name in created:
+            print(f"  Created: {name}")
+        for name in skipped:
+            print(f"  Skipped (exists): {name}")
+
+        names = project_dir_names()
+        ai_dir = project_root / names[0]
+        if not ai_dir.exists():
+            ai_dir.mkdir()
+            print(f"  Created: {ai_dir.name}/")
+
+        gitignore = project_root / ".gitignore"
+        gitignore_content = gitignore.read_text() if gitignore.exists() else ""
+        dir_name = ai_dir.name
+        local_configs = [
+            f"{dir_name}/config.local.json",
+            f"{dir_name}/mcp-config.local.json",
+            f"{dir_name}/.ai-config-lock.json",
+            f"{dir_name}/skill-conflicts/",
+        ]
+        additions = [c for c in local_configs if c not in gitignore_content]
         if additions:
             with open(gitignore, "a") as f:
                 f.write("\n# AI local configs\n")
@@ -311,7 +565,12 @@ class CLI:
             sys.exit(1)
 
     def sync(
-        self, providers=None, project=False, all_providers=False, prune=False, dry_run=False
+        self,
+        providers=None,
+        project=False,
+        all_providers=False,
+        prune=False,
+        dry_run=False,
     ) -> None:
         """Write unified config back to provider-native locations."""
         engine = SyncEngine(self.env)
@@ -366,6 +625,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Universal AI Configuration Manager", prog="ai-config"
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -384,6 +644,22 @@ def main():
         action="store_true",
         help="Scan all projects and migrate their skills to global ~/.agents/skills",
     )
+    migrate_parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Never prompt on skill conflicts; quarantine the incoming copy",
+    )
+    migrate_parser.add_argument(
+        "--reconcile-aliases",
+        action="store_true",
+        help="Move legacy '<name>.<provider>' skill dirs to skill-conflicts/",
+    )
+    migrate_parser.add_argument(
+        "--dest",
+        metavar="PATH",
+        help="Alternate unified destination root for migrated config "
+        "(skips the destination prompt)",
+    )
 
     # validate command
     subparsers.add_parser("validate", help="Validate configuration setup")
@@ -392,7 +668,16 @@ def main():
     subparsers.add_parser("status", help="Show configuration status")
 
     # init-project command
-    subparsers.add_parser("init-project", help="Initialize .ai/ in current project")
+    init_project_parser = subparsers.add_parser(
+        "init-project",
+        help="Initialize .agents/ in current project (legacy .ai/ still supported)",
+    )
+    init_project_parser.add_argument(
+        "--template",
+        metavar="DIR",
+        help="Copy a template directory into the project; {{PROJECT_NAME}} "
+        "is substituted and existing files are never overwritten",
+    )
 
     # get-config command
     get_config_parser = subparsers.add_parser("get-config", help="Get provider configuration")
@@ -426,13 +711,13 @@ def main():
     sync_parser.add_argument(
         "--prune",
         action="store_true",
-        help="Make provider MCP lists an exact mirror of unified config "
-        "(removes extras, backs up files first)",
+        help="Make provider MCP lists an exact mirror of unified config and "
+        "remove synced skills that left scope (backs up files first; "
+        "never deletes skills it did not write)",
     )
     sync_parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be written without writing"
     )
-
     args = parser.parse_args()
 
     if not args.command:
@@ -444,13 +729,20 @@ def main():
     if args.command == "init":
         cli.init(fresh=args.fresh)
     elif args.command == "migrate":
-        cli.migrate(provider=args.provider, project=args.project, all_projects=args.all_projects)
+        cli.migrate(
+            provider=args.provider,
+            project=args.project,
+            all_projects=args.all_projects,
+            interactive=False if args.no_interactive else None,
+            reconcile_aliases=args.reconcile_aliases,
+            dest=args.dest,
+        )
     elif args.command == "validate":
         cli.validate()
     elif args.command == "status":
         cli.status()
     elif args.command == "init-project":
-        cli.init_project()
+        cli.init_project(args.template)
     elif args.command == "get-config":
         cli.get_config(args.provider)
     elif args.command == "set-config":

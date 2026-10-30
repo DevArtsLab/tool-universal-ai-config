@@ -4,6 +4,108 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [0.3.0] - 2026-10-30
+
+### Added
+
+- Sync materializes whole skill directories (SKILL.md plus companion
+  files), not just `SKILL.md`
+- Per-provider skills scoping: `providers.<name>.skills` with `include`,
+  `exclude`, or `enabled: false`
+- Global `skills.enabled` list honored as a sync allowlist
+- `--prune` removes synced skills that left scope, tracked via a
+  `.ai-config-skills` manifest so user skills are never deleted
+- Symlink-only sync: `ai-config sync` links skill directories into
+  provider skills dirs so every provider shares one editable source and
+  content is never duplicated; a platform that cannot link gets a loud
+  error, never a silent copy. Provider rules files that hold only the
+  unified `AGENTS.md` content are linked the same way
+- `ai-config init-project --template DIR` copies a project template into
+  the target repo, substitutes `{{PROJECT_NAME}}`, never overwrites
+  existing files, and skips VCS internals and `.DS_Store`
+- `ai-config migrate` prompts for a destination root on a TTY (default:
+  `~/.agents`); `--dest PATH` answers non-interactively and
+  `--no-interactive` keeps the default
+- Project config dir renamed to `.agents/` with legacy `.ai/` still
+  honored; `AGENT_PROJECT_DIRS` overrides the search list
+- Skills lockfile `.ai-config-lock.json` next to each skills root: sha256
+  content hashes, `createdAt`/`updatedAt` seeded from file mtimes,
+  `origin` provenance (`imported:<provider>`, or `github:<source>` for
+  skills the npm `skills` CLI installed via its sibling
+  `.skill-lock.json`), and per-provider receipts of the last pushed hash.
+  Entries drop for skills deleted from disk
+- `ai-config status` reports per-provider skill state (in sync, stale,
+  drifted, missing) from lockfile receipts and live hashes, plus recorded
+  conflicts
+- Skill conflict quarantine: a same-name skill with different content
+  parks under `skill-conflicts/<name>/<provider>/` (sibling of the skills
+  dir) instead of an in-store `<name>.<provider>` alias. On a TTY,
+  `migrate` prompts keep / replace / skip; resolved conflicts drop from
+  the record once the parked copy is removed
+- `ai-config migrate --no-interactive` quarantines without prompting, and
+  `--reconcile-aliases` moves legacy `<name>.<provider>` dirs into
+  `skill-conflicts/`
+- Sync drift protection: a managed provider copy whose live hash differs
+  from the recorded push (or predates recording) is backed up, never
+  silently overwritten
+- Migration subset detection: an incoming skill whose files are all
+  identical members of the existing skill is skipped, not conflicted
+- OS junk files (`.DS_Store`, `Thumbs.db`, `desktop.ini`, `._*`) are
+  ignored by skill hashing and equality so they cannot fabricate drift or
+  conflicts
+- `ai-config --version`
+- CI runs pytest, `black --check`, and `mypy` on every push and PR to main
+- Per-provider sync receipts record `mode` (`link`) so audits can tell a
+  linked pointer from a copied directory
+
+### Security
+
+- Project config dirs (`.agents/`, `.ai/`) are trusted only when the dir
+  and its parent are owned by the current user; a config planted in a
+  shared directory can no longer inject settings (CWE-427, finding F1)
+- Project roots are trusted only when owned by the current user for the
+  same reason; ownership failures surface a `SecurityWarning`
+- Symlinked entries inside skill dirs are never read or copied during
+  import: a planted `skill/file -> /etc/passwd` link can no longer pull
+  arbitrary local files into the store. `skill_files`/`dir_hash` skip
+  links for hashing and equality, `copytree` imports ignore them, and
+  symlinked skill dirs are skipped as pointers
+
+### Changed
+
+- MCP export is now fail-closed: a provider receives only the servers named
+  in `providers.<name>.mcp.include` (`["*"]` for everything); no `mcp` scope
+  means no servers, and `exclude` alone grants nothing. `migrate` seeds the
+  include list from the servers the provider already had, and sync warns
+  when a targeted provider is unscoped. `--prune` with an explicit scope
+  mirrors even an empty grant.
+- Unified rules moved to `~/.agents/AGENTS.md`; `init` relocates a legacy
+  `config/AGENTS.md` there, and `init --fresh` removes the master rules
+  file as well
+- Rules migration no longer appends provider text into a populated
+  unified `AGENTS.md` - divergence is reported for manual merge, since
+  appending is how duplicated lines accumulated
+- Windsurf skills sync target is `~/.codeium/windsurf/skills/`; both
+  Codeium-era and `~/.windsurf/` skills dirs are still scanned on read
+
+### Fixed
+
+- Conflicting skills can no longer land inside the skills store as
+  `<name>.<provider>` dirs that could never load - the skill rule
+  requires the folder name to equal the SKILL.md `name:`
+
+- Nested `BEGIN/END ai-config managed` blocks are flattened correctly,
+  including text stranded between inner and outer END markers
+- Exported rules can no longer carry markers that nest managed blocks
+- Rules migration dedupes previously migrated chunks instead of
+  compounding duplicated lines on re-import
+- `<!-- Migrated from X -->` markers match hyphenated/dotted provider names
+- Displaced user skills move to hidden `.ai-config-backups/`; `<name>.backup`
+  siblings appeared to providers as phantom skills
+- Sync skips rewriting rules files whose managed block is unchanged
+
 ## [0.2.1] - 2026-10-05
 
 ### Security

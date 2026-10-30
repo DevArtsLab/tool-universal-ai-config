@@ -7,11 +7,43 @@ import os
 import platform
 import warnings
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 class SecurityWarning(UserWarning):
     """Configuration was found in a location not owned by the current user."""
+
+
+PROJECT_DIR_DEFAULT = ".agents"
+PROJECT_DIR_LEGACY = ".ai"
+
+
+def project_dir_names() -> Tuple[str, ...]:
+    """Project config dir names, in precedence order.
+
+    Override with the AGENT_PROJECT_DIRS env var (comma-separated names).
+    The first entry is the default created by `ai-config init-project`.
+    Defaults to .agents/ plus the legacy .ai/.
+    """
+    raw = os.getenv("AGENT_PROJECT_DIRS")
+    if raw:
+        names = tuple(n.strip() for n in raw.split(",") if n.strip())
+        if names:
+            return names
+    return (PROJECT_DIR_DEFAULT, PROJECT_DIR_LEGACY)
+
+
+def project_dir_name(root: Path) -> str:
+    """Resolve the project config dir under root.
+
+    Return the first configured name that exists under root; default to the
+    first configured name when none exist yet.
+    """
+    names = project_dir_names()
+    for name in names:
+        if (root / name).is_dir():
+            return name
+    return names[0]
 
 
 def _dir_owned_by_user(path: Path) -> Optional[bool]:
@@ -26,9 +58,10 @@ def _dir_owned_by_user(path: Path) -> Optional[bool]:
 
 
 def _trusted_ai_dir(ai_dir: Path) -> bool:
-    """An .ai/ dir is trusted only when both it and its parent are owned by
-    the current user, so another user can neither write into it nor replace
-    it. Prevents config injection from shared directories (CWE-427)."""
+    """A project config dir (.agents/ or .ai/) is trusted only when both it
+    and its parent are owned by the current user, so another user can
+    neither write into it nor replace it. Prevents config injection from
+    shared directories (CWE-427)."""
     owned_ai = _dir_owned_by_user(ai_dir)
     owned_parent = _dir_owned_by_user(ai_dir.parent)
     if owned_ai is None or owned_parent is None:
@@ -52,17 +85,20 @@ def _trusted_ai_dir(ai_dir: Path) -> bool:
 class AgentEnv:
     """Manages the ~/.agents directory structure for AI agent configuration."""
 
-    def __init__(self, app_name: str = "agent"):
+    def __init__(self, app_name: str = "agent", base: Optional[Path] = None):
         self.app_name = app_name
         self.home = Path.home()
         self.system = platform.system()
 
-        # Base directory: ~/.agents (or user override)
-        agent_base = os.getenv("AGENT_CONFIG_HOME")
-        if agent_base:
-            self.base = Path(agent_base)
+        # Base directory: explicit override, AGENT_CONFIG_HOME, or ~/.agents
+        if base is not None:
+            self.base = Path(base)
         else:
-            self.base = self.home / ".agents"
+            agent_base = os.getenv("AGENT_CONFIG_HOME")
+            if agent_base:
+                self.base = Path(agent_base)
+            else:
+                self.base = self.home / ".agents"
 
     @property
     def base_dir(self) -> Path:
@@ -73,6 +109,13 @@ class AgentEnv:
     def config(self) -> Path:
         """User configurations, prompts, and credentials."""
         return self.base / "config"
+
+    @property
+    def rules(self) -> Path:
+        """Master rules file, at the root of the governed scope (the
+        AGENTS.md convention). `ai-config init` relocates a legacy
+        <base>/config/AGENTS.md here."""
+        return self.base / "AGENTS.md"
 
     @property
     def skills(self) -> Path:
@@ -95,20 +138,22 @@ class AgentEnv:
         return self.base / "cache"
 
     def project_config(self, cwd: Optional[Path] = None) -> Optional[Path]:
-        """Project-local .ai/ directory from current working directory.
+        """Project-local config directory (names from project_dir_names())
+        from current working directory.
 
-        Only .ai/ directories owned by the current user are trusted; configs
+        Only directories owned by the current user are trusted; configs
         in directories owned by other users are skipped to prevent injection
         from shared workspaces.
         """
         start = Path(cwd) if cwd else Path.cwd()
 
-        # Walk up from cwd looking for .ai/ directory
+        # Walk up from cwd looking for a configured project dir
         current = start
         while current != current.parent:
-            ai_dir = current / ".ai"
-            if ai_dir.exists() and _trusted_ai_dir(ai_dir):
-                return ai_dir
+            for name in project_dir_names():
+                ai_dir = current / name
+                if ai_dir.exists() and _trusted_ai_dir(ai_dir):
+                    return ai_dir
             current = current.parent
 
         return None
@@ -152,7 +197,8 @@ class AgentEnv:
 
 
 def find_project_root(cwd: Optional[Path] = None) -> Optional[Path]:
-    """Find project root by looking for .git, .jj, or .ai/ directory.
+    """Find project root by looking for .git, .jj, or a project config dir
+    (.agents/ or legacy .ai/).
 
     Only directories owned by the current user are trusted, so project
     config cannot be injected from a shared location (CWE-427).
@@ -161,28 +207,31 @@ def find_project_root(cwd: Optional[Path] = None) -> Optional[Path]:
     current = start
 
     while current != current.parent:
-        ai_dir = current / ".ai"
-        if ai_dir.exists():
-            if _trusted_ai_dir(ai_dir):
-                return current
-        elif (current / ".git").exists() or (current / ".jj").exists():
-            owned = _dir_owned_by_user(current)
-            if owned is True:
-                return current
-            if owned is None:
+        for name in project_dir_names():
+            ai_dir = current / name
+            if ai_dir.exists():
+                if _trusted_ai_dir(ai_dir):
+                    return current
+                break
+        else:
+            if (current / ".git").exists() or (current / ".jj").exists():
+                owned = _dir_owned_by_user(current)
+                if owned is True:
+                    return current
+                if owned is None:
+                    warnings.warn(
+                        f"Cannot verify ownership of {current} on this platform; "
+                        "using it anyway. Ensure it is a directory you trust.",
+                        SecurityWarning,
+                        stacklevel=2,
+                    )
+                    return current
                 warnings.warn(
-                    f"Cannot verify ownership of {current} on this platform; "
-                    "using it anyway. Ensure it is a directory you trust.",
+                    f"Skipping untrusted project root {current}: "
+                    "it is not owned by the current user.",
                     SecurityWarning,
                     stacklevel=2,
                 )
-                return current
-            warnings.warn(
-                f"Skipping untrusted project root {current}: "
-                "it is not owned by the current user.",
-                SecurityWarning,
-                stacklevel=2,
-            )
         current = current.parent
 
     return None

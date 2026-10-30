@@ -5,7 +5,7 @@ Project-local configuration management.
 import json
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-from .environment import AgentEnv, find_project_root
+from .environment import AgentEnv, find_project_root, project_dir_name
 from .config import deep_merge, load_json, save_json, ConfigError
 
 
@@ -15,14 +15,17 @@ class ProjectConfig:
     def __init__(self, project_root: Optional[Path] = None, env: Optional[AgentEnv] = None):
         self.env = env or AgentEnv()
         self.project_root = project_root or find_project_root()
-        self.ai_dir = self.project_root / ".ai" if self.project_root else None
+        # Project config dir: .agents/ preferred, legacy .ai/ still honored.
+        self.ai_dir = (
+            self.project_root / project_dir_name(self.project_root) if self.project_root else None
+        )
 
     def is_in_project(self) -> bool:
         """Check if currently in a project directory."""
         return self.ai_dir is not None and self.ai_dir.exists()
 
     def _require_ai_dir(self) -> Path:
-        """Return the .ai/ dir or raise if not in a project."""
+        """Return the project config dir (.agents/ or .ai/) or raise if not in a project."""
         if self.ai_dir is None:
             raise ConfigError("Not in a project directory")
         return self.ai_dir

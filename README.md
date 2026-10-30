@@ -8,8 +8,11 @@ A unified configuration system for AI agents across multiple providers (Devin, W
 - **XDG-Compliant**: Follows Linux/macOS/Windows directory standards
 - **Migration Support**: Automatically migrates existing provider configs
 - **Sync**: Writes unified config back to each provider's native files (`ai-config sync`)
-- **Project-Local**: Per-project configuration with `.ai/` directory
+- **Project-Local**: Per-project configuration with `.agents/` directory (legacy `.ai/` still supported)
 - **Shared Resources**: MCP servers and skills shared across providers
+- **Drift Detection**: Skills lockfile tracks pushed content hashes, so
+  locally edited or stale provider copies surface in `status` and are
+  backed up rather than overwritten
 - **Provider Overrides**: Provider-specific settings when needed
 
 ## Supported Providers
@@ -35,7 +38,7 @@ Legacy paths are covered too: the Windsurf line spans Codeium-era
 (`~/.codeium/`) through current `~/.windsurf/` locations, and Devin detection
 covers both `~/.config/devin/` (active config) and `~/.devin/` (application
 data). Migration reads every known path; sync writes to the provider's
-current master location.
+current master location (Windsurf skills: `~/.codeium/windsurf/skills/`).
 
 ## Installation
 
@@ -121,10 +124,12 @@ ai-config migrate --project
 
 ```
 ~/.agents/                  # All agent data in one place
+  ├── AGENTS.md           # Shared rules (global)
+  ├── .ai-config-lock.json # Skills lockfile: hashes, origins, sync receipts
+  ├── skill-conflicts/    # Quarantined same-name skills pending resolution
   ├── config/
   │   ├── config.json     # Unified config (all providers read this)
-  │   ├── mcp-config.json # MCP servers
-  │   └── AGENTS.md       # Shared rules
+  │   └── mcp-config.json # MCP servers
   ├── skills/             # Shared skills
   │   └── example-skill/
   ├── data/               # Long-term memory, datasets, plugins
@@ -141,7 +146,7 @@ ai-config migrate --project
 ### Project-Local Configuration
 
 ```
-.ai/                      # In repository root
+.agents/                  # In repository root (.ai/ also recognized)
   ├── config.json         # Shared team settings
   ├── config.local.json   # Personal overrides (gitignored)
   ├── skills/             # Project-specific skills
@@ -172,7 +177,7 @@ ai-config migrate --project
   },
   "skills": {
     "enabled": [],
-    "paths": ["~/.agents/skills/", ".ai/skills/"]
+    "paths": ["~/.agents/skills/", ".agents/skills/", ".ai/skills/"]
   }
 }
 ```
@@ -215,7 +220,22 @@ Migrate existing provider configurations.
 ai-config migrate              # Migrate all detected providers
 ai-config migrate devin        # Migrate specific provider
 ai-config migrate --project    # Migrate project configs
+ai-config migrate --dest PATH  # Migrate into an alternate unified root
+ai-config migrate --no-interactive     # Quarantine skill conflicts without prompting
+ai-config migrate --reconcile-aliases  # Move legacy <name>.<provider> dirs to skill-conflicts/
 ```
+
+On a TTY, `migrate` first asks where migrated config should land: the
+default user store (`~/.agents`) or a custom path. `--dest PATH` answers
+that question up front and `--no-interactive` silently keeps the default,
+so scripts never block. Everything that normally lands under `~/.agents`
+(skills, `config/mcp-config.json`, the lockfile, `skill-conflicts/`)
+lands under the chosen root instead. `--dest` does not apply to
+`--project`, whose destination is the project's own `.agents/` dir.
+
+On a TTY, `migrate` asks how to resolve each same-name skill conflict
+(keep / replace / skip); otherwise the incoming copy is quarantined under
+`skill-conflicts/<name>/<provider>/` next to the skills dir.
 
 ### `ai-config validate`
 
@@ -227,7 +247,11 @@ ai-config validate
 
 ### `ai-config status`
 
-Show current configuration status.
+Show current configuration status. When a skills lockfile exists, also
+reports per-provider skill state (in sync, stale, drifted, missing) and
+any recorded conflicts. Reading live hashes refreshes the lockfile in
+place: source entries are reconciled with the skills dir and conflict
+records whose parked copies were removed are pruned.
 
 ```bash
 ai-config status
@@ -235,7 +259,7 @@ ai-config status
 
 ### `ai-config init-project`
 
-Initialize `.ai/` directory in current project.
+Initialize `.agents/` directory in current project. Legacy `.ai/` directories are still detected and used.
 
 ```bash
 ai-config init-project
@@ -266,33 +290,92 @@ ai-config sync --project      # project-level targets (.cursor/, .vscode/, ...)
 ai-config sync --prune        # also remove MCP servers no longer in scope
 ```
 
+Skills sync is **symlink-only**: each provider's skills dir links to the
+unified copy, so a skill edited in any provider edits the single source
+and nothing is ever duplicated. If a platform cannot create a symlink,
+sync reports an error rather than silently copying content. A provider
+rules file that holds only the unified `AGENTS.md` content is linked the
+same way.
+
 Bare `ai-config sync` only writes to providers that opted in via
 `"providers.<name>.sync": true`. Providers can also read the unified config
 directly (see Provider Integration) without any file export.
 
 Sync merges by default: existing keys in provider files are preserved, so
 servers added outside the unified config survive. Pass `--prune` to make a
-provider's MCP list an exact mirror of its scoped unified set; pruned files
-are backed up with a `.backup` suffix first.
+provider's MCP list an exact mirror of its scoped unified set and to remove
+synced skills that left scope; pruned MCP files are backed up with a
+`.backup` suffix first, and skills outside the `.ai-config-skills` manifest
+are left untouched. A skill name already claimed by a user-managed dir or
+file is preserved under `.ai-config-backups/` in that skills dir - and so
+is a managed copy whose contents were edited locally since the recorded
+push (drift protection, via the skills lockfile).
 
 #### Per-provider MCP scoping
 
-By default every provider receives the full unified MCP server set. Scope it
-in `~/.agents/config/config.json`:
+MCP export is **fail-closed**: a provider receives only the servers named in
+its `mcp.include` list, set in `~/.agents/config/config.json`. A provider
+with no `mcp` scope gets no servers at all, so the shared unified set can
+never flood a native file:
 
 ```json
 {
   "providers": {
     "cursor": { "mcp": { "include": ["github", "filesystem"] } },
-    "claude": { "mcp": { "exclude": ["internal-tools"] } }
+    "claude": { "mcp": { "include": ["*"], "exclude": ["internal-tools"] } }
   }
 }
 ```
 
-`include` is an allowlist (only those servers sync); `exclude` removes
-servers from the full set. Use this to keep credential-bearing MCP configs
-out of providers that don't need them. Servers marked `"disabled": true` in
-`mcp-config.json` are never exported, even when named in `include`.
+`include` is the grant: a name list exports only those servers, `["*"]`
+exports the whole active set. `exclude` then subtracts from the granted set
+
+- on its own it grants nothing. `ai-config migrate` seeds `mcp.include`
+  with the names the provider already had, so a migrated provider keeps its
+  own set and unified additions need an explicit opt-in. Sync warns when a
+  targeted provider has no `mcp` scope. Servers marked `"disabled": true` in
+  `mcp-config.json` are never exported, even when named in `include`.
+
+#### Per-provider skills scoping
+
+Skills follow the same scoping rules. Whole skill directories are synced
+(`SKILL.md` plus companion files like `references/` and `scripts/`), and
+synced names are recorded in a `.ai-config-skills` manifest inside each
+provider's skills dir. `--prune` removes only skills recorded in that
+manifest, so skills you placed in a provider dir yourself are never
+deleted.
+
+A skills lockfile (`.ai-config-lock.json` next to each skills root)
+tracks content hashes, `createdAt`/`updatedAt`, and provenance
+(`imported:<provider>` for migrated skills, `github:<source>` for skills
+installed by the npm `skills` CLI), plus a receipt of the hash last pushed
+to each provider. That lets `ai-config status` distinguish a stale copy
+from one drifted by local edits, and lets sync back drifted copies up
+instead of overwriting them.
+
+```json
+{
+  "skills": { "enabled": ["skill-a", "skill-b"] },
+  "providers": {
+    "cursor": { "skills": { "include": ["skill-a"] } },
+    "devin": { "skills": { "enabled": false } }
+  }
+}
+```
+
+`skills.enabled` is a global allowlist (empty means all skills are
+candidates). `providers.<name>.skills` then narrows per provider:
+`include` allowlists, `exclude` removes, and `"enabled": false` opts the
+provider out of skill sync entirely - useful when a provider already reads
+another location (e.g. Devin scanning `~/.claude/skills`), which would
+otherwise list every skill twice.
+
+Same-name skills with different content never land in the store as
+`<name>.<provider>` aliases - a folder name that differs from the
+SKILL.md `name:` frontmatter cannot load as a skill. Migration quarantines
+conflicts under `skill-conflicts/<name>/<provider>/` and records them in
+the lockfile; `ai-config migrate --reconcile-aliases` retires aliases left
+behind by older versions.
 
 Rules synced into shared files (like a project `AGENTS.md`) are wrapped in
 `<!-- BEGIN ai-config managed -->` markers so repeated syncs update in place
@@ -335,7 +418,14 @@ supported.
 MCP servers are deduplicated on import: identical entries merge, and a
 same-name server with a different config is kept under a `<name>.<provider>`
 alias (e.g. `github.cursor`) rather than silently overwriting the existing
-one.
+one. Skills are deduplicated too: identical skills - and incoming copies
+whose files are all identical subsets of the existing skill - are skipped,
+while a conflicting same-name skill is quarantined under
+`skill-conflicts/<name>/<provider>/` (prompting keep / replace / skip on a
+TTY). The whole skill directory, not just `SKILL.md`, is imported. Rules
+imports strip managed blocks and dedupe previously migrated chunks; once
+the unified `AGENTS.md` holds content it is the master copy, so divergent
+provider rules are reported for manual merge instead of appended.
 
 Legacy configs are backed up with `.backup` extension.
 
@@ -345,16 +435,25 @@ All agent data lives under `~/.agents/` on every platform (Linux, macOS,
 Windows). Set the `AGENT_CONFIG_HOME` environment variable to relocate the
 base directory.
 
+Project config dirs are `.agents/` by default (legacy `.ai/` also
+detected). Override the search list with `AGENT_PROJECT_DIRS`, a
+comma-separated list in precedence order - the first entry is the name
+`ai-config init-project` creates. Example:
+
+```bash
+export AGENT_PROJECT_DIRS=".mycfg,.agents,.ai"
+```
+
 ## Security: Project Configuration
 
 When resolving project configuration, `ai-config` searches parent
-directories for `.ai/` folders. **Only `.ai/` directories owned by the
+directories for `.agents/` and `.ai/` folders. **Only project config directories owned by the
 current user are loaded** - this prevents configuration injection from
 shared or world-writable workspaces, where another user could plant a
 malicious `config.json` or `mcp-config.json` (API keys, MCP servers) that
 would merge into your settings and be exported to provider files.
 
-If a `.ai/` directory is skipped, a `SecurityWarning` naming the path is
+If a `.agents/` or `.ai/` directory is skipped, a `SecurityWarning` naming the path is
 emitted. On platforms where ownership cannot be verified (Windows), the
 config is loaded with a warning instead.
 
@@ -362,9 +461,9 @@ config is loaded with a warning instead.
 
 1. **Secrets Management**: Never store API keys in config files. Use system keyrings or environment variables.
 
-2. **Project Config**: Use `.ai/config.json` for team settings and `.ai/config.local.json` for personal overrides.
+2. **Project Config**: Use `.agents/config.json` for team settings and `.agents/config.local.json` for personal overrides.
 
-3. **Shared Resources**: Put common MCP servers and skills in user config; project-specific ones in `.ai/`.
+3. **Shared Resources**: Put common MCP servers and skills in user config; project-specific ones in `.agents/`.
 
 4. **Validation**: Always run `ai-config validate` after making changes.
 

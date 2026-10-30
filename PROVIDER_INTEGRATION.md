@@ -7,7 +7,7 @@ This guide explains how AI providers (Devin, Windsurf, Claude, etc.) can integra
 The universal AI configuration system provides:
 
 - **Single source of truth**: All providers read from `~/.agents/config/config.json`
-- **Project-local overrides**: `.ai/config.json` and `.ai/config.local.json` in projects
+- **Project-local overrides**: `.agents/config.json` and `.agents/config.local.json` in projects (`.ai/` legacy supported)
 - **Shared resources**: MCP servers and skills shared across providers
 - **Provider-specific overrides**: Each provider can have custom settings
 
@@ -131,7 +131,7 @@ The unified config file (`~/.agents/config/config.json`) has this structure:
   "skills": {
     // Shared skills configuration
     "enabled": ["skill-name"],
-    "paths": ["~/.agents/skills/", ".ai/skills/"]
+    "paths": ["~/.agents/skills/", ".agents/skills/", ".ai/skills/"]
   }
 }
 ```
@@ -140,8 +140,8 @@ The unified config file (`~/.agents/config/config.json`) has this structure:
 
 When reading configuration, use this precedence (highest to lowest):
 
-1. Project local overrides (`.ai/config.local.json`)
-2. Project shared config (`.ai/config.json`)
+1. Project local overrides (`.agents/config.local.json`)
+2. Project shared config (`.agents/config.json`)
 3. Provider-specific settings (in `~/.agents/config/config.json`)
 4. Shared settings (in `~/.agents/config/config.json`)
 
@@ -199,7 +199,7 @@ Always check for provider-specific settings before using shared settings.
 
 ### 3. Support Project-Local Config
 
-Automatically detect and apply `.ai/` configuration when in a project.
+Automatically detect and apply `.agents/` (or legacy `.ai/`) configuration when in a project.
 
 ### 4. Handle Missing Config Gracefully
 
