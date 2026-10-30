@@ -220,9 +220,18 @@ Migrate existing provider configurations.
 ai-config migrate              # Migrate all detected providers
 ai-config migrate devin        # Migrate specific provider
 ai-config migrate --project    # Migrate project configs
+ai-config migrate --dest PATH  # Migrate into an alternate unified root
 ai-config migrate --no-interactive     # Quarantine skill conflicts without prompting
 ai-config migrate --reconcile-aliases  # Move legacy <name>.<provider> dirs to skill-conflicts/
 ```
+
+On a TTY, `migrate` first asks where migrated config should land: the
+default user store (`~/.agents`) or a custom path. `--dest PATH` answers
+that question up front and `--no-interactive` silently keeps the default,
+so scripts never block. Everything that normally lands under `~/.agents`
+(skills, `config/mcp-config.json`, the lockfile, `skill-conflicts/`)
+lands under the chosen root instead. `--dest` does not apply to
+`--project`, whose destination is the project's own `.agents/` dir.
 
 On a TTY, `migrate` asks how to resolve each same-name skill conflict
 (keep / replace / skip); otherwise the incoming copy is quarantined under

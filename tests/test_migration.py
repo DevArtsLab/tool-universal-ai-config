@@ -2,6 +2,7 @@
 
 import json
 import pytest
+from pathlib import Path
 
 from universal_ai_config.config import UnifiedConfig
 from universal_ai_config.environment import AgentEnv
@@ -455,3 +456,51 @@ def test_migrate_stray_file_at_skill_path_moved_aside(sandbox):
     assert count == 1
     assert (env.skills / "demo" / "SKILL.md").is_file()
     assert (env.base / "skill-conflicts" / "demo" / "stray").is_file()
+
+
+def test_migrate_dest_writes_alternate_root(sandbox, tmp_path):
+    """--dest routes migrated content to an alternate unified root."""
+    from universal_ai_config.cli import CLI
+
+    _write_cursor_mcp(sandbox, {"gh": {"command": "npx", "args": ["x"]}})
+    dest = tmp_path / "alt-store"
+
+    CLI().migrate(provider="cursor", interactive=False, dest=str(dest))
+
+    assert (
+        UnifiedConfig(AgentEnv(base=dest)).load_mcp_servers()["gh"]["command"] == "npx"
+    )
+    assert UnifiedConfig(AgentEnv()).load_mcp_servers() == {}
+
+
+def test_migrate_dest_and_project_errors(sandbox, tmp_path):
+    """--dest has no meaning for --project: its .agents/ is the target."""
+    from universal_ai_config.cli import CLI
+
+    with pytest.raises(SystemExit):
+        CLI().migrate(project=True, interactive=False, dest=str(tmp_path / "x"))
+
+
+def test_pick_destination_defaults_on_enter(sandbox, monkeypatch):
+    from universal_ai_config.cli import _pick_destination
+
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    assert _pick_destination(Path("/default")) == Path("/default")
+
+
+def test_pick_destination_custom_path(sandbox, tmp_path, monkeypatch):
+    from universal_ai_config.cli import _pick_destination
+
+    answers = iter(["2", str(tmp_path / "custom")])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    assert _pick_destination(Path("/default")) == tmp_path / "custom"
+
+
+def test_pick_destination_eof_keeps_default(sandbox, monkeypatch):
+    from universal_ai_config.cli import _pick_destination
+
+    def eof(prompt=""):
+        raise EOFError
+
+    monkeypatch.setattr("builtins.input", eof)
+    assert _pick_destination(Path("/default")) == Path("/default")

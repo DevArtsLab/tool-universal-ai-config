@@ -85,17 +85,20 @@ def _trusted_ai_dir(ai_dir: Path) -> bool:
 class AgentEnv:
     """Manages the ~/.agents directory structure for AI agent configuration."""
 
-    def __init__(self, app_name: str = "agent"):
+    def __init__(self, app_name: str = "agent", base: Optional[Path] = None):
         self.app_name = app_name
         self.home = Path.home()
         self.system = platform.system()
 
-        # Base directory: ~/.agents (or user override)
-        agent_base = os.getenv("AGENT_CONFIG_HOME")
-        if agent_base:
-            self.base = Path(agent_base)
+        # Base directory: explicit override, AGENT_CONFIG_HOME, or ~/.agents
+        if base is not None:
+            self.base = Path(base)
         else:
-            self.base = self.home / ".agents"
+            agent_base = os.getenv("AGENT_CONFIG_HOME")
+            if agent_base:
+                self.base = Path(agent_base)
+            else:
+                self.base = self.home / ".agents"
 
     @property
     def base_dir(self) -> Path:

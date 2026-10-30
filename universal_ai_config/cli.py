@@ -16,6 +16,27 @@ from .providers import PROVIDERS, expand
 from .sync import SyncEngine
 
 
+def _pick_destination(default: Path) -> Path:
+    """Interactive destination pick for migrate. Enter or "1" keeps the
+    default user store; "2" accepts a custom path. Non-answers (EOF,
+    Ctrl-C, empty path) also keep the default."""
+    print("\nDestination for migrated config:")
+    print(f"  1) {default}  (default user store)")
+    print("  2) Enter a path")
+    try:
+        choice = input("Choice [1]: ").strip()
+    except (EOFError, KeyboardInterrupt):
+        return default
+    if choice == "2":
+        try:
+            raw = input("Path: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return default
+        if raw:
+            return Path(raw).expanduser()
+    return default
+
+
 class CLI:
     """Command-line interface for AI configuration management."""
 
@@ -77,12 +98,34 @@ class CLI:
         all_projects: bool = False,
         interactive: Optional[bool] = None,
         reconcile_aliases: bool = False,
+        dest: Optional[str] = None,
     ) -> None:
         """Migrate existing provider configurations."""
         print("Starting migration...")
 
         if interactive is not None:
             self.migrator.interactive = interactive
+
+        if dest and project:
+            print(
+                "Error: --dest does not apply to --project; "
+                "the project .agents/ dir is the destination"
+            )
+            sys.exit(1)
+
+        # Destination: explicit --dest wins; an interactive pick runs when
+        # stdin is a TTY (the migrate default); --no-interactive silently
+        # keeps the default user store so scripts never block.
+        env = self.env
+        migrator = self.migrator
+        target = Path(dest).expanduser() if dest else None
+        if target is None and not project and migrator.interactive:
+            target = _pick_destination(env.base)
+        if target is not None and target.resolve() != env.base.resolve():
+            env = AgentEnv(base=target)
+            env.initialize_dirs()
+            migrator = ProviderMigrator(env, interactive=migrator.interactive)
+            print(f"Destination: {env.base}")
 
         if reconcile_aliases:
             if provider or project or all_projects:
@@ -91,13 +134,13 @@ class CLI:
                     "argument, --project, or --all-projects"
                 )
                 sys.exit(1)
-            moved = self.migrator.reconcile_skill_aliases(self.env.skills)
-            print(f"\n✓ Reconciled {moved} skill alias(es) into {self.env.base}/skill-conflicts/")
+            moved = migrator.reconcile_skill_aliases(env.skills)
+            print(f"\n✓ Reconciled {moved} skill alias(es) into {env.base}/skill-conflicts/")
             return
 
         if all_projects:
             # Scan all projects and migrate their skills to global
-            self.migrator.migrate_all_project_skills()
+            migrator.migrate_all_project_skills()
         elif project:
             # Migrate project configs
             project_root = find_project_root()
@@ -106,19 +149,19 @@ class CLI:
                 return
 
             print(f"Migrating project at: {project_root}")
-            self.migrator.migrate_project(project_root)
+            migrator.migrate_project(project_root)
         else:
             # Migrate user configs
             if provider:
                 # Migrate specific provider
                 try:
-                    self.migrator.migrate_provider(provider)
+                    migrator.migrate_provider(provider)
                 except MigrationError as e:
                     print(f"Error: {e}")
                     sys.exit(1)
             else:
                 # Migrate all detected providers
-                results = self.migrator.migrate_all()
+                results = migrator.migrate_all()
                 if not results:
                     print("No legacy configurations found to migrate")
                     return
@@ -606,6 +649,12 @@ def main():
         action="store_true",
         help="Move legacy '<name>.<provider>' skill dirs to skill-conflicts/",
     )
+    migrate_parser.add_argument(
+        "--dest",
+        metavar="PATH",
+        help="Alternate unified destination root for migrated config "
+        "(skips the destination prompt)",
+    )
 
     # validate command
     subparsers.add_parser("validate", help="Validate configuration setup")
@@ -681,6 +730,7 @@ def main():
             all_projects=args.all_projects,
             interactive=False if args.no_interactive else None,
             reconcile_aliases=args.reconcile_aliases,
+            dest=args.dest,
         )
     elif args.command == "validate":
         cli.validate()
