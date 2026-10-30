@@ -486,7 +486,11 @@ class CLI:
         skip_parts = {".git", ".jj", ".svn", ".hg"}
         for src in sorted(template_dir.rglob("*")):
             rel = src.relative_to(template_dir)
-            if any(p in skip_parts for p in rel.parts) or src.name == ".DS_Store":
+            if (
+                any(p in skip_parts for p in rel.parts)
+                or src.name == ".DS_Store"
+                or src.is_symlink()
+            ):
                 continue
             dst = project_root / rel
             if src.is_dir():
