@@ -19,7 +19,7 @@ from .providers import (
     normalize_mcp_name,
     normalize_mcp_server,
 )
-from .lockfile import SkillsLock, dir_hash, skill_files
+from .lockfile import SkillsLock, dir_hash, ignore_symlinks, skill_files
 from .sync import _SKILL_ALIAS_RE, dirs_equal, strip_managed_markers
 
 
@@ -305,9 +305,14 @@ class ProviderMigrator:
             # tool internals, never skills.
             if skill_file.parent.name.startswith("."):
                 continue
+            # A symlinked skill dir is a pointer to content elsewhere;
+            # importing through it would copy whatever it points at.
+            if skill_file.parent.is_symlink():
+                print(f"  Skipping symlinked skill dir: {skill_file.parent.name}")
+                continue
             migrated += self._import_one_skill(skill_file.parent, target_root, provider, lock)
         for skill_file in sorted(src_dir.glob("*.md")):
-            if skill_file.name != "SKILL.md":
+            if skill_file.name != "SKILL.md" and not skill_file.is_symlink():
                 migrated += self._import_one_loose_skill(skill_file, target_root, provider, lock)
         if lock.data["skills"] or lock.data["conflicts"]:
             lock.save()
@@ -335,7 +340,7 @@ class ProviderMigrator:
             )
         self._move_stray_aside(target_root, name, target)
         try:
-            shutil.copytree(skill_dir, target)
+            shutil.copytree(skill_dir, target, ignore=ignore_symlinks)
         except (OSError, shutil.Error) as e:
             print(f"  Failed to migrate skill {name}: {e}")
             return 0
@@ -426,7 +431,7 @@ class ProviderMigrator:
             try:
                 if staged.exists():
                     shutil.rmtree(staged)
-                shutil.copytree(incoming, staged)
+                shutil.copytree(incoming, staged, ignore=ignore_symlinks)
                 shutil.move(str(existing), str(displaced))
                 staged.rename(existing)
             except (OSError, shutil.Error) as e:
@@ -445,7 +450,7 @@ class ProviderMigrator:
 
         # Copy, not move: the provider's own skills dir keeps its copy.
         try:
-            shutil.copytree(incoming, loser)
+            shutil.copytree(incoming, loser, ignore=ignore_symlinks)
         except (OSError, shutil.Error) as e:
             print(f"    Quarantine failed ({e}); {name} left in place")
             return 0
@@ -766,7 +771,10 @@ class ProviderMigrator:
 
         total = 0
         for skill_dir in skill_dirs:
-            label = str(skill_dir.relative_to(Path.home()))
+            try:
+                label = str(skill_dir.relative_to(Path.home()))
+            except ValueError:
+                label = str(skill_dir)
             count = self._copy_skills_to_global(skill_dir, source_label=label)
             total += count
 

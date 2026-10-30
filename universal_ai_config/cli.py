@@ -6,7 +6,7 @@ import json
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from . import __version__
 from .environment import AgentEnv, find_project_root, project_dir_name, project_dir_names
 from .config import UnifiedConfig, ConfigError
@@ -145,7 +145,7 @@ class CLI:
             # Migrate project configs
             project_root = find_project_root()
             if not project_root:
-                print("Error: Not in a project directory (no .git or .ai found)")
+                print("Error: Not in a project directory (no .git, .jj, or .agents/.ai found)")
                 return
 
             print(f"Migrating project at: {project_root}")
@@ -481,7 +481,8 @@ class CLI:
             print(f"Error: template directory not found: {template_dir}")
             sys.exit(1)
 
-        created, skipped = [], []
+        created: List[str] = []
+        skipped: List[str] = []
         skip_parts = {".git", ".jj", ".svn", ".hg"}
         for src in sorted(template_dir.rglob("*")):
             rel = src.relative_to(template_dir)
@@ -503,10 +504,10 @@ class CLI:
                 dst.write_text(text.replace("{{PROJECT_NAME}}", project_root.name))
             created.append(str(rel))
 
-        for rel in created:
-            print(f"  Created: {rel}")
-        for rel in skipped:
-            print(f"  Skipped (exists): {rel}")
+        for name in created:
+            print(f"  Created: {name}")
+        for name in skipped:
+            print(f"  Skipped (exists): {name}")
 
         names = project_dir_names()
         ai_dir = project_root / names[0]

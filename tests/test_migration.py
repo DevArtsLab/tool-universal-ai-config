@@ -467,9 +467,7 @@ def test_migrate_dest_writes_alternate_root(sandbox, tmp_path):
 
     CLI().migrate(provider="cursor", interactive=False, dest=str(dest))
 
-    assert (
-        UnifiedConfig(AgentEnv(base=dest)).load_mcp_servers()["gh"]["command"] == "npx"
-    )
+    assert UnifiedConfig(AgentEnv(base=dest)).load_mcp_servers()["gh"]["command"] == "npx"
     assert UnifiedConfig(AgentEnv()).load_mcp_servers() == {}
 
 

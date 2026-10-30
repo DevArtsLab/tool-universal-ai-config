@@ -7,7 +7,7 @@ import os
 import platform
 import warnings
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 class SecurityWarning(UserWarning):
@@ -18,7 +18,7 @@ PROJECT_DIR_DEFAULT = ".agents"
 PROJECT_DIR_LEGACY = ".ai"
 
 
-def project_dir_names() -> tuple:
+def project_dir_names() -> Tuple[str, ...]:
     """Project config dir names, in precedence order.
 
     Override with the AGENT_PROJECT_DIRS env var (comma-separated names).

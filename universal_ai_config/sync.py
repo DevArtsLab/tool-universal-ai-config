@@ -165,7 +165,7 @@ class SyncEngine:
 
         project_root = find_project_root() if project else None
         if project and not project_root:
-            print("Error: not in a project directory (no .git or .ai found)")
+            print("Error: not in a project directory (no .git, .jj, or .agents/.ai found)")
             return result
 
         unified = (

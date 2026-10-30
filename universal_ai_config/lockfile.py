@@ -38,6 +38,16 @@ def _is_junk(path: Path) -> bool:
     return path.name in _IGNORED_NAMES or path.name.startswith("._")
 
 
+def ignore_symlinks(directory: str, names: list) -> set:
+    """shutil.copytree ignore callback: skip every symlinked entry.
+
+    Reading through a symlink during import would copy the link target's
+    bytes into the store - a planted skill dir could exfiltrate arbitrary
+    local files (~/.ssh, /etc) into synced provider dirs. A symlink is a
+    pointer, not skill content; it is never materialized."""
+    return {n for n in names if (Path(directory) / n).is_symlink()}
+
+
 def skill_files(path: Path) -> Dict[str, Path]:
     """Content files in a skill dir, relative path -> absolute path.
     Single source of truth for what counts as skill content; dir_hash and
@@ -45,7 +55,7 @@ def skill_files(path: Path) -> Dict[str, Path]:
     return {
         p.relative_to(path).as_posix(): p
         for p in path.rglob("*")
-        if p.is_file() and not _is_junk(p)
+        if p.is_file() and not p.is_symlink() and not _is_junk(p)
     }
 
 
@@ -182,9 +192,7 @@ class SkillsLock:
 
     # ---- provider section ----
 
-    def record_sync(
-        self, provider: str, name: str, content_hash: str, mode: str = "link"
-    ) -> None:
+    def record_sync(self, provider: str, name: str, content_hash: str, mode: str = "link") -> None:
         """Record that content_hash was pushed to provider for skill name.
         mode is how it was materialized ("link" or "copy") so audits can
         tell a pointer from a duplicated copy."""
