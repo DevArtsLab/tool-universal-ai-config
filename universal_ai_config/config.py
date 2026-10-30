@@ -188,7 +188,10 @@ class UnifiedConfig:
         return {
             "shared": {},
             "providers": {},
-            "skills": {"enabled": [], "paths": [str(self.env.skills), ".ai/skills"]},
+            "skills": {
+                "enabled": [],
+                "paths": [str(self.env.skills), ".agents/skills", ".ai/skills"],
+            },
             "read_config_from": {"windsurf": False, "claude": False},
         }
 

@@ -104,7 +104,7 @@ After installation:
   ├── models/             # Model caches
   └── venv/               # Isolated environments
 
-.ai/                        # Project config (in repos)
+.agents/                    # Project config (in repos; .ai/ also works)
   ├── config.json         # Team settings
   ├── config.local.json   # Personal overrides (gitignored)
   ├── mcp-config.json     # Project MCP servers

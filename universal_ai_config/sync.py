@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .config import UnifiedConfig, deep_merge
-from .environment import AgentEnv, find_project_root
+from .environment import AgentEnv, find_project_root, project_dir_name
 from .formats import load_any_safe, save_any, FormatError
 from .lockfile import SkillsLock, dir_hash, skill_files
 from .providers import PROVIDERS, ProviderSpec, SyncTargets, expand, render_mcp_servers
@@ -203,7 +203,11 @@ class SyncEngine:
                     "--all for an explicit one-off export."
                 )
         rules_text = self._read_rules(project_root)
-        skills_dir = (project_root / ".ai" / "skills") if project_root else self.env.skills
+        skills_dir = (
+            (project_root / project_dir_name(project_root) / "skills")
+            if project_root
+            else self.env.skills
+        )
         lock = SkillsLock(skills_dir.parent)
 
         for name in targets:
@@ -700,7 +704,7 @@ class SyncEngine:
         if user_rules.exists():
             parts.append(user_rules.read_text())
         if project_root:
-            project_rules = project_root / ".ai" / "AGENTS.md"
+            project_rules = project_root / project_dir_name(project_root) / "AGENTS.md"
             if project_rules.exists():
                 parts.append(project_rules.read_text())
         return "\n\n".join(parts) if parts else None

@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Dict, Optional
 from . import __version__
-from .environment import AgentEnv, find_project_root
+from .environment import AgentEnv, find_project_root, project_dir_name, project_dir_names
 from .config import UnifiedConfig, ConfigError
 from .lockfile import LOCK_NAME, SkillsLock, dir_hash
 from .migration import ProviderMigrator, MigrationError, SKILL_CONFLICTS_DIR
@@ -177,7 +177,7 @@ class CLI:
         # Check project config if in project
         project_root = find_project_root()
         if project_root:
-            ai_dir = project_root / ".ai"
+            ai_dir = project_root / project_dir_name(project_root)
             if ai_dir.exists():
                 print(f"  ✓ Project config: {ai_dir}")
 
@@ -248,12 +248,12 @@ class CLI:
         # Project status
         project_root = find_project_root()
         if project_root:
-            ai_dir = project_root / ".ai"
+            ai_dir = project_root / project_dir_name(project_root)
             print(f"\n✓ Project detected: {project_root}")
             if ai_dir.exists():
                 print(f"  Project config: {ai_dir}")
             else:
-                print(f"  No .ai/ directory in project")
+                print(f"  No .agents/ directory in project")
                 print(f"  Run 'ai-config init-project' to create it")
         else:
             print(f"\nNot in a project directory")
@@ -266,7 +266,9 @@ class CLI:
         project_root = find_project_root()
         if project_root:
             self._print_lock_section(
-                project_root / ".ai", project_root / ".ai" / "skills", project_root
+                project_root / project_dir_name(project_root),
+                project_root / project_dir_name(project_root) / "skills",
+                project_root,
             )
 
     def _print_lock_section(
@@ -351,19 +353,22 @@ class CLI:
                 print(f"  {name}: {latest['resolution']} from {latest['provider']} -> {where}")
 
     def init_project(self) -> None:
-        """Initialize .ai/ directory in current project."""
+        """Initialize .agents/ directory in current project (legacy .ai/ kept working)."""
         project_root = find_project_root()
         if not project_root:
             print("Error: Not in a git repository")
             print("Initialize a git repository first, or run in an existing project")
             sys.exit(1)
 
-        ai_dir = project_root / ".ai"
-        if ai_dir.exists():
-            print(f"Project already initialized: {ai_dir}")
-            return
+        names = project_dir_names()
+        for name in names:
+            existing = project_root / name
+            if existing.exists():
+                print(f"Project already initialized: {existing}")
+                return
 
-        print(f"Initializing .ai/ in {project_root}")
+        ai_dir = project_root / names[0]
+        print(f"Initializing {ai_dir.name}/ in {project_root}")
         ai_dir.mkdir()
 
         # Create project config
@@ -395,11 +400,12 @@ class CLI:
         if gitignore.exists():
             gitignore_content = gitignore.read_text()
 
+        dir_name = ai_dir.name
         local_configs = [
-            ".ai/config.local.json",
-            ".ai/mcp-config.local.json",
-            ".ai/.ai-config-lock.json",
-            ".ai/skill-conflicts/",
+            f"{dir_name}/config.local.json",
+            f"{dir_name}/mcp-config.local.json",
+            f"{dir_name}/.ai-config-lock.json",
+            f"{dir_name}/skill-conflicts/",
         ]
 
         additions = []
@@ -543,7 +549,10 @@ def main():
     subparsers.add_parser("status", help="Show configuration status")
 
     # init-project command
-    subparsers.add_parser("init-project", help="Initialize .ai/ in current project")
+    subparsers.add_parser(
+        "init-project",
+        help="Initialize .agents/ in current project (legacy .ai/ still supported)",
+    )
 
     # get-config command
     get_config_parser = subparsers.add_parser("get-config", help="Get provider configuration")

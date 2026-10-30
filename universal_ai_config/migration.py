@@ -11,7 +11,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 from .config import UnifiedConfig, deep_merge, load_json, save_json, ConfigError
-from .environment import AgentEnv
+from .environment import AgentEnv, project_dir_name, project_dir_names
 from .formats import load_any_safe
 from .providers import (
     PROVIDERS,
@@ -610,7 +610,7 @@ class ProviderMigrator:
 
     def migrate_project(self, project_root: Path) -> None:
         """Migrate project-specific configs."""
-        ai_dir = project_root / ".ai"
+        ai_dir = project_root / project_dir_name(project_root)
         ai_dir.mkdir(exist_ok=True)
 
         for provider in self.PROVIDER_PATHS.keys():
@@ -731,6 +731,10 @@ class ProviderMigrator:
         for provider in self.PROVIDER_PATHS.values():
             for pattern in provider.get("project_skills", []):
                 skill_patterns.append(Path(pattern))
+        # ai-config's own project skill dirs (.agents/ default, .ai/ legacy,
+        # or whatever AGENT_PROJECT_DIRS configures).
+        for name in project_dir_names():
+            skill_patterns.append(Path(name) / "skills")
 
         skill_dirs = []
         for base in search_paths:

@@ -2,8 +2,8 @@
 Skills lockfile: a JSON record of skill content hashes and sync history.
 
 One lock lives next to each skills root (``~/.agents/.ai-config-lock.json``
-for the unified store, ``<project>/.ai/.ai-config-lock.json`` for project
-scopes). It mirrors the shape of the npm ``skills`` CLI lockfile
+for the unified store, ``<project>/.agents/.ai-config-lock.json`` for
+project scopes; legacy ``<project>/.ai/`` dirs are still honored). It mirrors the shape of the npm ``skills`` CLI lockfile
 (``.skill-lock.json``) but is a separate file owned by ai-config.
 
 Two sections:

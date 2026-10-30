@@ -8,6 +8,7 @@ from universal_ai_config.environment import (
     AgentEnv,
     SecurityWarning,
     find_project_root,
+    project_dir_name,
 )
 
 
@@ -87,6 +88,57 @@ def test_config_precedence_excludes_untrusted(owned_project, monkeypatch):
     with pytest.warns(SecurityWarning):
         precedence = env.get_config_precedence(cwd=owned_project)
     assert owned_project / ".ai" / "config.json" not in precedence
+
+
+def test_project_dir_name_defaults_to_agents(tmp_path):
+    """No project dir yet -> default is .agents."""
+    assert project_dir_name(tmp_path) == ".agents"
+
+
+def test_project_dir_name_prefers_agents_over_legacy(tmp_path):
+    """Both present -> .agents wins."""
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".ai").mkdir()
+    assert project_dir_name(tmp_path) == ".agents"
+
+
+def test_project_config_accepts_agents_dir(tmp_path):
+    """A .agents/ project dir is detected the same way .ai/ is."""
+    proj = tmp_path / "proj"
+    (proj / ".agents").mkdir(parents=True)
+    env = AgentEnv()
+    assert env.project_config(cwd=proj) == proj / ".agents"
+
+
+def test_project_config_legacy_ai_still_detected(tmp_path):
+    """Legacy .ai/-only projects keep working."""
+    proj = tmp_path / "proj"
+    (proj / ".ai").mkdir(parents=True)
+    env = AgentEnv()
+    assert env.project_config(cwd=proj) == proj / ".ai"
+
+
+def test_find_project_root_accepts_agents_dir(tmp_path):
+    proj = tmp_path / "proj"
+    (proj / ".agents").mkdir(parents=True)
+    assert find_project_root(cwd=proj) == proj
+
+
+def test_project_dir_names_env_override(tmp_path, monkeypatch):
+    """AGENT_PROJECT_DIRS lets users pick any project dir names."""
+    proj = tmp_path / "proj"
+    (proj / ".mycfg").mkdir(parents=True)
+    monkeypatch.setenv("AGENT_PROJECT_DIRS", ".mycfg,.agents")
+    env = AgentEnv()
+    assert env.project_config(cwd=proj) == proj / ".mycfg"
+    assert project_dir_name(tmp_path) == ".mycfg"  # first name = init default
+
+
+def test_find_project_root_env_override(tmp_path, monkeypatch):
+    proj = tmp_path / "proj"
+    (proj / ".mycfg").mkdir(parents=True)
+    monkeypatch.setenv("AGENT_PROJECT_DIRS", ".mycfg")
+    assert find_project_root(cwd=proj) == proj
 
 
 def test_rules_path_is_base_agents_md(tmp_path, monkeypatch):

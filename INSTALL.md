@@ -92,7 +92,7 @@ rm -rf ~/.agents/state/
 rm -rf ~/.agents/cache/
 
 # Remove project configs (per project)
-rm -rf .ai/
+rm -rf .agents/   # or .ai/ on legacy projects
 ```
 
 ## Platform-Specific Notes

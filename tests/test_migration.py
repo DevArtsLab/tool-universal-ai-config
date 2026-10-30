@@ -436,7 +436,7 @@ def test_migrate_project_resolves_against_project_root(sandbox, tmp_path, monkey
 
     ProviderMigrator(AgentEnv()).migrate_project(project)
 
-    assert (project / ".ai" / "config.json").exists()
+    assert (project / ".agents" / "config.json").exists()
 
 
 def test_migrate_stray_file_at_skill_path_moved_aside(sandbox):

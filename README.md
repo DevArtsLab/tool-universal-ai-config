@@ -8,7 +8,7 @@ A unified configuration system for AI agents across multiple providers (Devin, W
 - **XDG-Compliant**: Follows Linux/macOS/Windows directory standards
 - **Migration Support**: Automatically migrates existing provider configs
 - **Sync**: Writes unified config back to each provider's native files (`ai-config sync`)
-- **Project-Local**: Per-project configuration with `.ai/` directory
+- **Project-Local**: Per-project configuration with `.agents/` directory (legacy `.ai/` still supported)
 - **Shared Resources**: MCP servers and skills shared across providers
 - **Drift Detection**: Skills lockfile tracks pushed content hashes, so
   locally edited or stale provider copies surface in `status` and are
@@ -146,7 +146,7 @@ ai-config migrate --project
 ### Project-Local Configuration
 
 ```
-.ai/                      # In repository root
+.agents/                  # In repository root (.ai/ also recognized)
   ├── config.json         # Shared team settings
   ├── config.local.json   # Personal overrides (gitignored)
   ├── skills/             # Project-specific skills
@@ -177,7 +177,7 @@ ai-config migrate --project
   },
   "skills": {
     "enabled": [],
-    "paths": ["~/.agents/skills/", ".ai/skills/"]
+    "paths": ["~/.agents/skills/", ".agents/skills/", ".ai/skills/"]
   }
 }
 ```
@@ -250,7 +250,7 @@ ai-config status
 
 ### `ai-config init-project`
 
-Initialize `.ai/` directory in current project.
+Initialize `.agents/` directory in current project. Legacy `.ai/` directories are still detected and used.
 
 ```bash
 ai-config init-project
@@ -426,16 +426,25 @@ All agent data lives under `~/.agents/` on every platform (Linux, macOS,
 Windows). Set the `AGENT_CONFIG_HOME` environment variable to relocate the
 base directory.
 
+Project config dirs are `.agents/` by default (legacy `.ai/` also
+detected). Override the search list with `AGENT_PROJECT_DIRS`, a
+comma-separated list in precedence order - the first entry is the name
+`ai-config init-project` creates. Example:
+
+```bash
+export AGENT_PROJECT_DIRS=".mycfg,.agents,.ai"
+```
+
 ## Security: Project Configuration
 
 When resolving project configuration, `ai-config` searches parent
-directories for `.ai/` folders. **Only `.ai/` directories owned by the
+directories for `.agents/` and `.ai/` folders. **Only project config directories owned by the
 current user are loaded** - this prevents configuration injection from
 shared or world-writable workspaces, where another user could plant a
 malicious `config.json` or `mcp-config.json` (API keys, MCP servers) that
 would merge into your settings and be exported to provider files.
 
-If a `.ai/` directory is skipped, a `SecurityWarning` naming the path is
+If a `.agents/` or `.ai/` directory is skipped, a `SecurityWarning` naming the path is
 emitted. On platforms where ownership cannot be verified (Windows), the
 config is loaded with a warning instead.
 
@@ -443,9 +452,9 @@ config is loaded with a warning instead.
 
 1. **Secrets Management**: Never store API keys in config files. Use system keyrings or environment variables.
 
-2. **Project Config**: Use `.ai/config.json` for team settings and `.ai/config.local.json` for personal overrides.
+2. **Project Config**: Use `.agents/config.json` for team settings and `.agents/config.local.json` for personal overrides.
 
-3. **Shared Resources**: Put common MCP servers and skills in user config; project-specific ones in `.ai/`.
+3. **Shared Resources**: Put common MCP servers and skills in user config; project-specific ones in `.agents/`.
 
 4. **Validation**: Always run `ai-config validate` after making changes.
 
