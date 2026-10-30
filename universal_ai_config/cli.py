@@ -106,11 +106,22 @@ class CLI:
         if interactive is not None:
             self.migrator.interactive = interactive
 
+        # Fail fast on invalid flag combos and unknown providers before
+        # any destination dirs get created.
         if dest and project:
             print(
                 "Error: --dest does not apply to --project; "
                 "the project .agents/ dir is the destination"
             )
+            sys.exit(1)
+        if reconcile_aliases and (provider or project or all_projects):
+            print(
+                "Error: --reconcile-aliases cannot combine with a provider "
+                "argument, --project, or --all-projects"
+            )
+            sys.exit(1)
+        if provider and provider not in PROVIDERS:
+            print(f"Error: unknown provider: {provider}")
             sys.exit(1)
 
         # Destination: explicit --dest wins; an interactive pick runs when
@@ -128,12 +139,6 @@ class CLI:
             print(f"Destination: {env.base}")
 
         if reconcile_aliases:
-            if provider or project or all_projects:
-                print(
-                    "Error: --reconcile-aliases cannot combine with a provider "
-                    "argument, --project, or --all-projects"
-                )
-                sys.exit(1)
             moved = migrator.reconcile_skill_aliases(env.skills)
             print(f"\n✓ Reconciled {moved} skill alias(es) into {env.base}/skill-conflicts/")
             return
@@ -167,7 +172,10 @@ class CLI:
                     return
 
         print("\n✓ Migration complete")
-        print("Run 'ai-config validate' to verify the setup")
+        if env is not self.env:
+            print(f"Run 'AGENT_CONFIG_HOME={env.base} ai-config validate' to verify the setup")
+        else:
+            print("Run 'ai-config validate' to verify the setup")
 
     def validate(self) -> None:
         """Validate the unified configuration setup."""
@@ -480,6 +488,7 @@ class CLI:
         if not template_dir.is_dir():
             print(f"Error: template directory not found: {template_dir}")
             sys.exit(1)
+        root_resolved = project_root.resolve()
 
         created: List[str] = []
         skipped: List[str] = []
@@ -493,10 +502,15 @@ class CLI:
             ):
                 continue
             dst = project_root / rel
+            # A symlinked path inside the project must not receive template
+            # content: mkdir or writes through it would escape the root.
+            if not dst.parent.resolve().is_relative_to(root_resolved):
+                print(f"  Skipped (symlinked path leaves project): {rel}")
+                continue
             if src.is_dir():
                 dst.mkdir(parents=True, exist_ok=True)
                 continue
-            if dst.exists():
+            if dst.exists() or dst.is_symlink():
                 skipped.append(str(rel))
                 continue
             dst.parent.mkdir(parents=True, exist_ok=True)
@@ -506,6 +520,7 @@ class CLI:
                 shutil.copy2(src, dst)
             else:
                 dst.write_text(text.replace("{{PROJECT_NAME}}", project_root.name))
+                shutil.copymode(src, dst)
             created.append(str(rel))
 
         for name in created:
@@ -513,8 +528,10 @@ class CLI:
         for name in skipped:
             print(f"  Skipped (exists): {name}")
 
-        names = project_dir_names()
-        ai_dir = project_root / names[0]
+        # Ensure a project config dir without shadowing an existing one:
+        # a project already on legacy .ai/ keeps .ai/ rather than gaining
+        # an empty .agents/ that would hide its config.
+        ai_dir = project_root / project_dir_name(project_root)
         if not ai_dir.exists():
             ai_dir.mkdir()
             print(f"  Created: {ai_dir.name}/")

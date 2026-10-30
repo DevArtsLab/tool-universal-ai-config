@@ -6,6 +6,29 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-30
+
+### Security
+
+- `init-project --template` no longer writes through symlinked paths in
+  the target project; content that would escape the project root is
+  skipped
+
+### Fixed
+
+- `init-project` (incl. `--template`) keeps an existing legacy `.ai/`
+  instead of creating an empty `.agents/` that shadowed its config
+- A failed skill symlink now stages beside the target first: the existing
+  provider skill is left intact instead of an empty path
+- Skills `exclude` applies on top of `include`, matching MCP scoping
+  semantics
+- Skills whose `SKILL.md` is a symlink are skipped during import instead
+  of producing a broken skill dir without instructions
+- `migrate --dest` validates the provider name and flag combos before
+  creating destination dirs, and the post-migrate hint points
+  `ai-config validate` at the chosen root
+- `init-project --template` preserves executable bits on copied scripts
+
 ## [0.3.0] - 2026-10-30
 
 ### Added

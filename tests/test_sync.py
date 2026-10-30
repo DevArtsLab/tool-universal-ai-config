@@ -742,3 +742,47 @@ def test_sync_rules_link_failure_writes_managed_block(sandbox, monkeypatch):
     target = sandbox / ".claude" / "CLAUDE.md"
     assert not target.is_symlink()
     assert "Be nice." in target.read_text()
+
+
+def test_sync_skills_include_and_exclude_combine(sandbox):
+    """include grants, then exclude subtracts - same semantics as MCP."""
+    (sandbox / ".cursor").mkdir()
+    other = AgentEnv().skills / "other-skill"
+    other.mkdir()
+    (other / "SKILL.md").write_text("# Other\n")
+    config = UnifiedConfig(AgentEnv())
+    unified = config.load_unified(include_mcp=False)
+    unified["providers"] = {
+        "cursor": {"skills": {"include": ["demo-skill", "other-skill"], "exclude": ["demo-skill"]}}
+    }
+    config.save_unified(unified)
+
+    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+
+    skills = sandbox / ".cursor" / "skills"
+    assert not (skills / "demo-skill").exists()
+    assert (skills / "other-skill").exists()
+
+
+def test_sync_skills_failed_relink_keeps_existing_target(sandbox, monkeypatch):
+    """A failed symlink must leave the existing provider skill in place:
+    the link is staged beside the target and only renamed in after the
+    old path is displaced."""
+    (sandbox / ".cursor").mkdir()
+    env = AgentEnv()
+    skills = sandbox / ".cursor" / "skills"
+    target = skills / "demo-skill"
+    target.mkdir(parents=True)
+    (target / "SKILL.md").write_text("# Provider-local version\n")
+
+    def boom(self, *args, **kwargs):
+        raise OSError("privilege not held")
+
+    monkeypatch.setattr(Path, "symlink_to", boom)
+    result = SyncEngine(env).sync(providers=["cursor"])
+
+    assert (target / "SKILL.md").read_text() == "# Provider-local version\n"
+    assert not target.is_symlink()
+    assert not (skills / ".demo-skill.ai-config-link").exists()
+    errors = [a for a in result.actions if a.status == "error"]
+    assert any("symlink failed" in a.detail for a in errors)

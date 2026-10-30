@@ -323,6 +323,11 @@ class ProviderMigrator:
     ) -> int:
         name = skill_dir.name
         target = target_root / name
+        # A symlinked SKILL.md means the instructions live elsewhere;
+        # copying the dir without it produces a broken skill. Skip.
+        if (skill_dir / "SKILL.md").is_symlink():
+            print(f"  Skipping skill with symlinked SKILL.md: {name}")
+            return 0
         if target.is_dir():
             if dirs_equal(skill_dir, target):
                 print(f"  Skipping duplicate skill: {name}")

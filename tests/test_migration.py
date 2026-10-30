@@ -502,3 +502,91 @@ def test_pick_destination_eof_keeps_default(sandbox, monkeypatch):
 
     monkeypatch.setattr("builtins.input", eof)
     assert _pick_destination(Path("/default")) == Path("/default")
+
+
+def test_migrate_skips_symlinked_skill_md(sandbox):
+    """A skill whose SKILL.md is a symlink is skipped, not imported as a
+    broken dir missing its instructions."""
+    env = AgentEnv()
+    src = sandbox / "provider-skills"
+    (src / "evil").mkdir(parents=True)
+    real = sandbox / "real.md"
+    real.write_text("# Secret\n")
+    (src / "evil" / "SKILL.md").symlink_to(real)
+
+    count = ProviderMigrator(env)._import_skills_dir(src, env.skills, "claude")
+
+    assert count == 0
+    assert not (env.skills / "evil").exists()
+
+
+def test_migrate_dest_unknown_provider_creates_nothing(sandbox, tmp_path):
+    """An unknown provider name fails before any --dest dirs are made."""
+    from universal_ai_config.cli import CLI
+
+    dest = tmp_path / "alt-store"
+    with pytest.raises(SystemExit):
+        CLI().migrate(provider="bogus", interactive=False, dest=str(dest))
+    assert not dest.exists()
+
+
+def _make_project(home, name="proj"):
+    project = home / name
+    (project / ".git").mkdir(parents=True)
+    return project
+
+
+def test_init_project_template_keeps_existing_ai(sandbox, tmp_path, monkeypatch):
+    """--template on a legacy .ai/ project must not create a shadowing
+    empty .agents/ that would hide the real config."""
+    from universal_ai_config.cli import CLI
+
+    project = _make_project(tmp_path)
+    (project / ".ai").mkdir()
+    (project / ".ai" / "config.json").write_text("{}")
+    template = tmp_path / "tmpl"
+    template.mkdir()
+    (template / "README.md").write_text("# {{PROJECT_NAME}}\n")
+    monkeypatch.chdir(project)
+
+    CLI().init_project(template=str(template))
+
+    assert not (project / ".agents").exists()
+    assert (project / "README.md").read_text() == "# proj\n"
+
+
+def test_init_project_template_skips_symlinked_parent(sandbox, tmp_path, monkeypatch):
+    """Template content must never escape the project root through a
+    symlinked destination directory."""
+    from universal_ai_config.cli import CLI
+
+    project = _make_project(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project / "linked").symlink_to(outside)
+    template = tmp_path / "tmpl"
+    (template / "linked").mkdir(parents=True)
+    (template / "linked" / "payload.txt").write_text("payload")
+    monkeypatch.chdir(project)
+
+    CLI().init_project(template=str(template))
+
+    assert not (outside / "payload.txt").exists()
+
+
+def test_init_project_template_preserves_exec_bit(sandbox, tmp_path, monkeypatch):
+    """Executable template scripts keep their mode through the write."""
+    import os
+    from universal_ai_config.cli import CLI
+
+    project = _make_project(tmp_path)
+    template = tmp_path / "tmpl"
+    template.mkdir()
+    script = template / "run.sh"
+    script.write_text("#!/bin/sh\n")
+    script.chmod(0o755)
+    monkeypatch.chdir(project)
+
+    CLI().init_project(template=str(template))
+
+    assert (project / "run.sh").stat().st_mode & 0o111

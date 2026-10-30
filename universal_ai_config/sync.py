@@ -397,10 +397,10 @@ class SyncEngine:
             return names
         include = prov_conf.get("include")
         if isinstance(include, list):
-            return [n for n in names if n in include]
+            names = [n for n in names if n in include]
         exclude = prov_conf.get("exclude")
         if isinstance(exclude, list) and exclude:
-            return [n for n in names if n not in exclude]
+            names = [n for n in names if n not in exclude]
         return names
 
     @staticmethod
@@ -583,18 +583,29 @@ class SyncEngine:
                     result.add(provider, "skills", target, "planned", f"would link {name}")
                     managed.add(name)
                     continue
-                self._displace_target(
-                    dst_dir, target, name, provider, lock, result, trusted=name in managed
-                )
+                # Stage the link beside the target first: a failed link
+                # leaves the existing skill untouched instead of an empty
+                # path. The dot-prefix keeps providers from seeing it.
+                staged = dst_dir / f".{name}.ai-config-link"
                 target.parent.mkdir(parents=True, exist_ok=True)
                 try:
-                    target.symlink_to(src.resolve(), target_is_directory=True)
+                    if staged.is_symlink() or staged.exists():
+                        self._remove_path(staged)
+                    staged.symlink_to(src.resolve(), target_is_directory=True)
                 except OSError as e:
                     # Link-only: no copy fallback. A platform that cannot
                     # link surfaces a loud error instead of silently
                     # duplicating skill content.
                     result.add(provider, "skills", target, "error", f"symlink failed: {e}")
                     continue
+                try:
+                    self._displace_target(
+                        dst_dir, target, name, provider, lock, result, trusted=name in managed
+                    )
+                    staged.rename(target)
+                except (OSError, shutil.Error):
+                    self._remove_path(staged)
+                    raise
                 result.add(provider, "skills", target, "written", name)
                 managed.add(name)
                 if lock:
