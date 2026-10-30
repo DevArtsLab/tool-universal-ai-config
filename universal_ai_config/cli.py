@@ -352,13 +352,17 @@ class CLI:
                 where = latest.get("quarantinedTo") or "unresolved"
                 print(f"  {name}: {latest['resolution']} from {latest['provider']} -> {where}")
 
-    def init_project(self) -> None:
+    def init_project(self, template: Optional[str] = None) -> None:
         """Initialize .agents/ directory in current project (legacy .ai/ kept working)."""
         project_root = find_project_root()
         if not project_root:
             print("Error: Not in a git repository")
             print("Initialize a git repository first, or run in an existing project")
             sys.exit(1)
+
+        if template:
+            self._init_project_from_template(project_root, Path(template).expanduser())
+            return
 
         names = project_dir_names()
         for name in names:
@@ -413,6 +417,70 @@ class CLI:
             if local_config not in gitignore_content:
                 additions.append(local_config)
 
+        if additions:
+            with open(gitignore, "a") as f:
+                f.write("\n# AI local configs\n")
+                for addition in additions:
+                    f.write(f"{addition}\n")
+            print(f"  Updated .gitignore")
+
+        print("\n✓ Project initialization complete")
+
+    def _init_project_from_template(self, project_root: Path, template_dir: Path) -> None:
+        """Copy a template directory into the project root.
+
+        {{PROJECT_NAME}} is substituted in text files. Existing files are
+        never overwritten. The project config dir (.agents/ or .ai/) and
+        gitignore entries are still ensured afterwards.
+        """
+        template_dir = template_dir.resolve()
+        if not template_dir.is_dir():
+            print(f"Error: template directory not found: {template_dir}")
+            sys.exit(1)
+
+        created, skipped = [], []
+        skip_parts = {".git", ".jj", ".svn", ".hg"}
+        for src in sorted(template_dir.rglob("*")):
+            rel = src.relative_to(template_dir)
+            if any(p in skip_parts for p in rel.parts) or src.name == ".DS_Store":
+                continue
+            dst = project_root / rel
+            if src.is_dir():
+                dst.mkdir(parents=True, exist_ok=True)
+                continue
+            if dst.exists():
+                skipped.append(str(rel))
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                text = src.read_text()
+            except UnicodeDecodeError:
+                shutil.copy2(src, dst)
+            else:
+                dst.write_text(text.replace("{{PROJECT_NAME}}", project_root.name))
+            created.append(str(rel))
+
+        for rel in created:
+            print(f"  Created: {rel}")
+        for rel in skipped:
+            print(f"  Skipped (exists): {rel}")
+
+        names = project_dir_names()
+        ai_dir = project_root / names[0]
+        if not ai_dir.exists():
+            ai_dir.mkdir()
+            print(f"  Created: {ai_dir.name}/")
+
+        gitignore = project_root / ".gitignore"
+        gitignore_content = gitignore.read_text() if gitignore.exists() else ""
+        dir_name = ai_dir.name
+        local_configs = [
+            f"{dir_name}/config.local.json",
+            f"{dir_name}/mcp-config.local.json",
+            f"{dir_name}/.ai-config-lock.json",
+            f"{dir_name}/skill-conflicts/",
+        ]
+        additions = [c for c in local_configs if c not in gitignore_content]
         if additions:
             with open(gitignore, "a") as f:
                 f.write("\n# AI local configs\n")
@@ -549,9 +617,15 @@ def main():
     subparsers.add_parser("status", help="Show configuration status")
 
     # init-project command
-    subparsers.add_parser(
+    init_project_parser = subparsers.add_parser(
         "init-project",
         help="Initialize .agents/ in current project (legacy .ai/ still supported)",
+    )
+    init_project_parser.add_argument(
+        "--template",
+        metavar="DIR",
+        help="Copy a template directory into the project; {{PROJECT_NAME}} "
+        "is substituted and existing files are never overwritten",
     )
 
     # get-config command
@@ -624,7 +698,7 @@ def main():
     elif args.command == "status":
         cli.status()
     elif args.command == "init-project":
-        cli.init_project()
+        cli.init_project(args.template)
     elif args.command == "get-config":
         cli.get_config(args.provider)
     elif args.command == "set-config":
