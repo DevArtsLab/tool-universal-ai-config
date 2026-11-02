@@ -1,6 +1,6 @@
 # Threat model: DevArtsLab/tool-universal-ai-config (`ai-config`)
 
-Extends the DevArts Lab baseline threat model (`DevArtsLab/devartslab-foundation` `md/security/LAB-THREAT-MODEL.md`) for this repository; this file wins where they differ.
+Extends the DevArts Lab baseline threat model (`DevArtsLab/foundation` `concepts/threat-model-lab.md`) for this repository; this file wins where they differ.
 
 Status: **draft from code**. Repository-specific questions below are still open; the lab-wide decisions in the baseline (all assets weighted equally, shared multi-user machines in scope for local tools, no accepted risks) apply here.
 
