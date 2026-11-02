@@ -3,6 +3,7 @@ CLI interface for universal AI configuration management.
 """
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -585,7 +586,6 @@ class CLI:
         self,
         providers=None,
         project=False,
-        all_providers=False,
         prune=False,
         dry_run=False,
     ) -> None:
@@ -598,7 +598,6 @@ class CLI:
         result = engine.sync(
             providers=providers,
             project=project,
-            all_providers=all_providers,
             prune=prune,
             dry_run=dry_run,
         )
@@ -633,6 +632,24 @@ class CLI:
             print(f"\n✓ Synced {written} file(s)" + (f", {errors} error(s)" if errors else ""))
         if errors:
             sys.exit(1)
+
+
+def require_admin_for_sync() -> None:
+    """Gate sync behind sudo.
+
+    Sync writes outside the unified store (provider dirs across $HOME and
+    projects). Requiring root keeps unattended agents from triggering it:
+    they cannot supply a password. Privileges drop back to the invoking
+    user afterwards so exported files stay user-owned.
+    """
+    if os.name != "posix" or os.geteuid() != 0:
+        print("Error: sync requires admin privileges. Run: sudo ai-config sync ...")
+        sys.exit(1)
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+    if sudo_uid and sudo_gid:
+        os.setgid(int(sudo_gid))
+        os.setuid(int(sudo_uid))
 
 
 def main():
@@ -709,7 +726,7 @@ def main():
     # sync command
     sync_parser = subparsers.add_parser(
         "sync",
-        help="Export unified config to providers opted in via providers.<name>.sync (or use --provider/--all)",
+        help="Export unified config to providers opted in via providers.<name>.sync (or use --provider). Requires sudo.",
     )
     sync_parser.add_argument(
         "--provider", action="append", help="Sync only this provider (repeatable)"
@@ -718,12 +735,6 @@ def main():
         "--project",
         action="store_true",
         help="Sync project-level targets (.cursor/, .vscode/, etc.)",
-    )
-    sync_parser.add_argument(
-        "--all",
-        dest="all_providers",
-        action="store_true",
-        help="Sync to all known providers, even if not detected",
     )
     sync_parser.add_argument(
         "--prune",
@@ -765,10 +776,10 @@ def main():
     elif args.command == "set-config":
         cli.set_config(args.provider, args.key, args.value)
     elif args.command == "sync":
+        require_admin_for_sync()
         cli.sync(
             providers=args.provider,
             project=args.project,
-            all_providers=args.all_providers,
             prune=args.prune,
             dry_run=args.dry_run,
         )

@@ -157,7 +157,6 @@ class SyncEngine:
         self,
         providers: Optional[List[str]] = None,
         project: bool = False,
-        all_providers: bool = False,
         prune: bool = False,
         dry_run: bool = False,
     ) -> SyncResult:
@@ -182,8 +181,6 @@ class SyncEngine:
             for name in unknown:
                 result.add(name, "-", Path(""), "error", "unknown provider")
             targets = [p for p in providers if p in PROVIDERS]
-        elif all_providers:
-            targets = list(PROVIDERS.keys())
         else:
             # Export is opt-in: only providers with providers.<name>.sync: true
             # in the unified config receive writes. Detection alone is never
@@ -197,8 +194,8 @@ class SyncEngine:
                 print(
                     "No providers opted in to sync. Set "
                     '"providers.<name>.sync": true in '
-                    "~/.agents/config/config.json, or pass --provider <name> / "
-                    "--all for an explicit one-off export."
+                    "~/.agents/config/config.json, or pass --provider <name> "
+                    "for an explicit one-off export."
                 )
         rules_text = self._read_rules(project_root)
         skills_dir = (

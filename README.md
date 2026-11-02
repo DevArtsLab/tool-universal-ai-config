@@ -31,8 +31,9 @@ A unified configuration system for AI agents across multiple providers (Devin, W
 
 Sync is **opt-in**: detection alone never pushes anything into a provider.
 A provider only receives writes when you set `"providers.<name>.sync": true`
-in `~/.agents/config/config.json`, or when you pass `--provider <name>` /
-`--all` for an explicit one-off export.
+in `~/.agents/config/config.json`, or when you pass `--provider <name>`
+for an explicit one-off export. Sync requires `sudo`: it writes outside
+the unified store, so unattended agents must not be able to invoke it.
 
 Legacy paths are covered too: the Windsurf line spans Codeium-era
 (`~/.codeium/`) through current `~/.windsurf/` locations, and Devin detection
@@ -273,7 +274,7 @@ Get configuration for a specific provider.
 ai-config get-config devin
 ```
 
-### `ai-config sync [--provider NAME] [--project] [--all] [--prune] [--dry-run]`
+### `sudo ai-config sync [--provider NAME] [--project] [--prune] [--dry-run]`
 
 Write the unified config back to each provider's native files: MCP servers
 (translated to each provider's format: `mcpServers`, `servers`,
@@ -282,12 +283,11 @@ block in `CLAUDE.md`/`AGENTS.md`/etc., or dedicated rule files), provider
 settings, and skills.
 
 ```bash
-ai-config sync --dry-run      # preview all writes
-ai-config sync                # sync providers opted in via config
-ai-config sync --provider cursor   # one provider, explicit
-ai-config sync --all          # every known provider, explicit
-ai-config sync --project      # project-level targets (.cursor/, .vscode/, ...)
-ai-config sync --prune        # also remove MCP servers no longer in scope
+sudo ai-config sync --dry-run      # preview all writes
+sudo ai-config sync                # sync providers opted in via config
+sudo ai-config sync --provider cursor   # one provider, explicit
+sudo ai-config sync --project      # project-level targets (.cursor/, .vscode/, ...)
+sudo ai-config sync --prune        # also remove MCP servers no longer in scope
 ```
 
 Skills sync is **symlink-only**: each provider's skills dir links to the
