@@ -28,14 +28,19 @@ SKILLS_MANIFEST = ".ai-config-skills"
 
 _MARKER_RE = re.compile(r"<!-- (BEGIN|END) ai-config managed -->\n?")
 
-# Set only by the CLI sudo gate after it has verified euid 0, just before it
-# drops privileges to the invoking user. There is deliberately no public
-# opt-out parameter on SyncEngine.sync().
+# Single-use token set only by the CLI sudo gate after it has verified euid 0,
+# just before it drops privileges to the invoking user. The first sync() call
+# consumes it, so later calls in the same (now unprivileged) process are gated
+# again. There is deliberately no public opt-out parameter on SyncEngine.sync().
 _admin_verified = False
 
 
 def _require_admin() -> None:
-    if _admin_verified or os.name != "posix" or not hasattr(os, "geteuid"):
+    global _admin_verified
+    if _admin_verified:
+        _admin_verified = False
+        return
+    if os.name != "posix" or not hasattr(os, "geteuid"):
         return
     if os.geteuid() != 0:
         raise PermissionError(

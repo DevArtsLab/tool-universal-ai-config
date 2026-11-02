@@ -9,9 +9,12 @@ import pytest
 from universal_ai_config import sync as sync_module
 from universal_ai_config.cli import require_admin_for_sync
 
+_real_require_admin = sync_module._require_admin
+
 
 @pytest.fixture(autouse=True)
-def _gate_not_passed(monkeypatch):
+def _real_gate(monkeypatch):
+    monkeypatch.setattr(sync_module, "_require_admin", _real_require_admin)
     monkeypatch.setattr(sync_module, "_admin_verified", False)
 
 
@@ -120,3 +123,16 @@ def test_engine_rejects_non_root_by_default():
     engine = SyncEngine.__new__(SyncEngine)
     with _posix(), patch.object(os, "geteuid", return_value=501), _pytest.raises(PermissionError):
         engine.sync()
+
+
+def test_gate_token_is_single_use(monkeypatch):
+    """After the privilege drop, only the first sync() is exempt."""
+    from universal_ai_config.sync import SyncEngine
+
+    engine = SyncEngine.__new__(SyncEngine)
+    monkeypatch.setattr(sync_module, "_admin_verified", True)
+    with _posix(), patch.object(os, "geteuid", return_value=1000):
+        sync_module._require_admin()
+        assert sync_module._admin_verified is False
+        with pytest.raises(PermissionError):
+            engine.sync()
