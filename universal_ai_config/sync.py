@@ -28,6 +28,21 @@ SKILLS_MANIFEST = ".ai-config-skills"
 
 _MARKER_RE = re.compile(r"<!-- (BEGIN|END) ai-config managed -->\n?")
 
+# Set only by the CLI sudo gate after it has verified euid 0, just before it
+# drops privileges to the invoking user. There is deliberately no public
+# opt-out parameter on SyncEngine.sync().
+_admin_verified = False
+
+
+def _require_admin() -> None:
+    if _admin_verified or os.name != "posix" or not hasattr(os, "geteuid"):
+        return
+    if os.geteuid() != 0:
+        raise PermissionError(
+            'sync requires admin privileges; run: sudo "$(command -v ai-config)" sync'
+        )
+
+
 # Holds user-owned skills moved aside by a sync. Kept in a hidden dir one
 # level deeper than the skills themselves so no provider (or a later
 # migrate) discovers a backup's SKILL.md as a real skill.
@@ -160,21 +175,10 @@ class SyncEngine:
         project: bool = False,
         prune: bool = False,
         dry_run: bool = False,
-        require_admin: bool = True,
     ) -> SyncResult:
-        # Guard at the API level too, not just the CLI: an unattended
-        # process importing SyncEngine must hit the same wall. The CLI
-        # opts out (require_admin=False) because its own gate already
-        # ran and dropped privileges to the invoking user.
-        if (
-            require_admin
-            and os.name == "posix"
-            and hasattr(os, "geteuid")
-            and os.geteuid() != 0
-        ):
-            raise PermissionError(
-                'sync requires admin privileges; run: sudo "$(command -v ai-config)" sync'
-            )
+        # Guard at the API level too, not just the CLI dispatch: an
+        # unattended process importing SyncEngine must hit the same wall.
+        _require_admin()
         result = SyncResult()
 
         project_root = find_project_root() if project else None

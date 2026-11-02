@@ -108,7 +108,7 @@ def test_lock_prunes_gone_conflicts(tmp_path):
 def test_sync_writes_lock(sandbox):
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
-    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
+    SyncEngine(env).sync(providers=["cursor"])
 
     lock_path = env.base / LOCK_NAME
     assert lock_path.is_file()
@@ -127,7 +127,7 @@ def test_sync_backs_up_drifted_managed_copy(sandbox):
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
     engine = SyncEngine(env)
-    engine.sync(require_admin=False, providers=["cursor"])
+    engine.sync(providers=["cursor"])
 
     # Drift under link mode: replace the managed symlink with a real dir
     # holding local edits, then bump the source.
@@ -137,7 +137,7 @@ def test_sync_backs_up_drifted_managed_copy(sandbox):
     (target / "SKILL.md").write_text("# Locally edited\n")
     (env.skills / "demo-skill" / "SKILL.md").write_text("# Demo v2\n")
 
-    engine.sync(require_admin=False, providers=["cursor"])
+    engine.sync(providers=["cursor"])
 
     backups = sandbox / ".cursor" / "skills" / SKILLS_BACKUP_DIR
     assert (backups / "demo-skill" / "SKILL.md").read_text() == "# Locally edited\n"
@@ -151,11 +151,11 @@ def test_sync_overwrites_undrifted_managed_copy(sandbox):
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
     engine = SyncEngine(env)
-    engine.sync(require_admin=False, providers=["cursor"])
+    engine.sync(providers=["cursor"])
 
     # Source changes only: provider copy is untouched, no backup needed.
     (env.skills / "demo-skill" / "SKILL.md").write_text("# Demo v2\n")
-    engine.sync(require_admin=False, providers=["cursor"])
+    engine.sync(providers=["cursor"])
 
     backups = sandbox / ".cursor" / "skills" / SKILLS_BACKUP_DIR
     assert not backups.exists()
@@ -165,7 +165,7 @@ def test_sync_overwrites_undrifted_managed_copy(sandbox):
 def test_dry_run_writes_no_lock(sandbox):
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
-    SyncEngine(env).sync(require_admin=False, providers=["cursor"], dry_run=True)
+    SyncEngine(env).sync(providers=["cursor"], dry_run=True)
     assert not (env.base / LOCK_NAME).exists()
 
 
@@ -217,7 +217,7 @@ def test_prune_backs_up_drifted_managed_skill(sandbox):
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
     engine = SyncEngine(env)
-    engine.sync(require_admin=False, providers=["cursor"])
+    engine.sync(providers=["cursor"])
 
     target = sandbox / ".cursor" / "skills" / "demo-skill"
     target.unlink()
@@ -225,7 +225,7 @@ def test_prune_backs_up_drifted_managed_skill(sandbox):
     (target / "SKILL.md").write_text("# Locally edited\n")
     shutil.rmtree(env.skills / "demo-skill")  # skill leaves sync scope
 
-    engine.sync(require_admin=False, providers=["cursor"], prune=True)
+    engine.sync(providers=["cursor"], prune=True)
 
     backups = sandbox / ".cursor" / "skills" / SKILLS_BACKUP_DIR
     assert (backups / "demo-skill" / "SKILL.md").read_text() == "# Locally edited\n"
@@ -240,7 +240,7 @@ def test_prune_removes_undrifted_managed_dir(sandbox):
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
     engine = SyncEngine(env)
-    engine.sync(require_admin=False, providers=["cursor"])
+    engine.sync(providers=["cursor"])
 
     target = sandbox / ".cursor" / "skills" / "demo-skill"
     target.unlink()
@@ -248,7 +248,7 @@ def test_prune_removes_undrifted_managed_dir(sandbox):
     (target / "SKILL.md").write_text("# Demo\n")  # same bytes as pushed
     shutil.rmtree(env.skills / "demo-skill")
 
-    engine.sync(require_admin=False, providers=["cursor"], prune=True)
+    engine.sync(providers=["cursor"], prune=True)
 
     skills = sandbox / ".cursor" / "skills"
     assert not target.exists()
@@ -264,7 +264,7 @@ def test_dot_dirs_are_never_skills(sandbox):
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
 
-    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
+    SyncEngine(env).sync(providers=["cursor"])
 
     skills = sandbox / ".cursor" / "skills"
     assert not (skills / ".demo-skill.ai-config-staged").exists()

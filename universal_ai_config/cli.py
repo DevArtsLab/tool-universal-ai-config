@@ -16,6 +16,7 @@ from .config import UnifiedConfig, ConfigError
 from .lockfile import LOCK_NAME, SkillsLock, dir_hash
 from .migration import ProviderMigrator, MigrationError, SKILL_CONFLICTS_DIR
 from .providers import PROVIDERS, expand
+from . import sync as sync_module
 from .sync import SyncEngine
 
 
@@ -597,14 +598,11 @@ class CLI:
         if dry_run:
             print("Dry run: showing what would be written\n")
 
-        # require_admin=False: the CLI gate already ran and privileges
-        # were dropped to the invoking user, so euid is non-root here.
         result = engine.sync(
             providers=providers,
             project=project,
             prune=prune,
             dry_run=dry_run,
-            require_admin=False,
         )
 
         if not result.actions:
@@ -683,12 +681,11 @@ def require_admin_for_sync() -> None:
     user afterwards so exported files stay user-owned.
     """
     if os.name != "posix" or os.geteuid() != 0:
-        print(
-            'Error: sync requires admin privileges. '
-            'Run: sudo "$(command -v ai-config)" sync ...'
-        )
+        print("Error: sync requires admin privileges.")
+        print('Run: sudo "$(command -v ai-config)" sync ...')
         _notify_sync_attempt()
         sys.exit(1)
+    sync_module._admin_verified = True
     sudo_uid = os.environ.get("SUDO_UID")
     sudo_gid = os.environ.get("SUDO_GID")
     try:
@@ -699,9 +696,12 @@ def require_admin_for_sync() -> None:
     import pwd
 
     pw = pwd.getpwuid(uid)
-    # Root captures HOME=/root under default sudo; restore the invoker's
-    # home before any ~ expansion (AgentEnv, provider paths).
-    os.environ["HOME"] = pw.pw_dir
+    # Default sudo replaces HOME with root's home; restore the invoker's
+    # home before any ~ expansion (AgentEnv, provider paths). A HOME that
+    # sudo preserved (sudo -E, env_keep) is an intentional override: keep it.
+    home = os.environ.get("HOME")
+    if not home or os.path.realpath(home) == os.path.realpath(pwd.getpwuid(0).pw_dir):
+        os.environ["HOME"] = pw.pw_dir
     # Real supplementary groups, not root's leftover set.
     os.initgroups(pw.pw_name, gid)
     os.setgid(gid)
