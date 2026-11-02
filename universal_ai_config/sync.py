@@ -5,6 +5,7 @@ provider's native locations (MCP files, rules files, skills dirs, config files).
 Migration imports provider -> unified. Sync exports unified -> provider.
 """
 
+import os
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -159,7 +160,21 @@ class SyncEngine:
         project: bool = False,
         prune: bool = False,
         dry_run: bool = False,
+        require_admin: bool = True,
     ) -> SyncResult:
+        # Guard at the API level too, not just the CLI: an unattended
+        # process importing SyncEngine must hit the same wall. The CLI
+        # opts out (require_admin=False) because its own gate already
+        # ran and dropped privileges to the invoking user.
+        if (
+            require_admin
+            and os.name == "posix"
+            and hasattr(os, "geteuid")
+            and os.geteuid() != 0
+        ):
+            raise PermissionError(
+                'sync requires admin privileges; run: sudo "$(command -v ai-config)" sync'
+            )
         result = SyncResult()
 
         project_root = find_project_root() if project else None

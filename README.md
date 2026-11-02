@@ -274,7 +274,12 @@ Get configuration for a specific provider.
 ai-config get-config devin
 ```
 
-### `sudo ai-config sync [--provider NAME] [--project] [--prune] [--dry-run]`
+### `sudo "$(command -v ai-config)" sync [--provider NAME] [--project] [--prune] [--dry-run]`
+
+Sync requires root. The `$(command -v ai-config)` expansion is needed
+because `sudo` replaces PATH with a secure system path that excludes
+user-local installs (`uv tool`, `pipx`, the one-line installer): a bare
+`sudo ai-config` returns `command not found`.
 
 Write the unified config back to each provider's native files: MCP servers
 (translated to each provider's format: `mcpServers`, `servers`,
@@ -283,11 +288,11 @@ block in `CLAUDE.md`/`AGENTS.md`/etc., or dedicated rule files), provider
 settings, and skills.
 
 ```bash
-sudo ai-config sync --dry-run      # preview all writes
-sudo ai-config sync                # sync providers opted in via config
-sudo ai-config sync --provider cursor   # one provider, explicit
-sudo ai-config sync --project      # project-level targets (.cursor/, .vscode/, ...)
-sudo ai-config sync --prune        # also remove MCP servers no longer in scope
+sudo "$(command -v ai-config)" sync --dry-run      # preview all writes
+sudo "$(command -v ai-config)" sync                # sync providers opted in via config
+sudo "$(command -v ai-config)" sync --provider cursor   # one provider, explicit
+sudo "$(command -v ai-config)" sync --project      # project-level targets (.cursor/, .vscode/, ...)
+sudo "$(command -v ai-config)" sync --prune        # also remove MCP servers no longer in scope
 ```
 
 Skills sync is **symlink-only**: each provider's skills dir links to the

@@ -62,7 +62,7 @@ def sandbox(tmp_path, monkeypatch):
 def test_sync_cursor_writes_native_files(sandbox):
     (sandbox / ".cursor").mkdir()  # provider "installed"
     engine = SyncEngine(AgentEnv())
-    result = engine.sync(providers=["cursor"])
+    result = engine.sync(require_admin=False, providers=["cursor"])
 
     mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
     assert mcp["mcpServers"]["github"]["command"] == "npx"
@@ -82,7 +82,7 @@ def test_sync_cursor_writes_native_files(sandbox):
 def test_sync_dry_run_writes_nothing(sandbox):
     (sandbox / ".cursor").mkdir()
     engine = SyncEngine(AgentEnv())
-    result = engine.sync(providers=["cursor"], dry_run=True)
+    result = engine.sync(require_admin=False, providers=["cursor"], dry_run=True)
 
     assert result.actions
     assert all(a.status == "planned" for a in result.actions)
@@ -95,21 +95,21 @@ def test_sync_claude_rules_managed_block(sandbox):
     target.write_text("# Existing notes\n")
 
     engine = SyncEngine(AgentEnv())
-    engine.sync(providers=["claude"])
+    engine.sync(require_admin=False, providers=["claude"])
 
     text = target.read_text()
     assert "# Existing notes" in text
     assert BLOCK_BEGIN in text and "Be nice." in text
 
     # Second sync replaces the block rather than duplicating it
-    engine.sync(providers=["claude"])
+    engine.sync(require_admin=False, providers=["claude"])
     assert target.read_text().count(BLOCK_BEGIN) == 1
 
 
 def test_sync_codex_toml(sandbox):
     (sandbox / ".codex").mkdir()
     engine = SyncEngine(AgentEnv())
-    engine.sync(providers=["codex"])
+    engine.sync(require_admin=False, providers=["codex"])
 
     data = _tomllib.loads((sandbox / ".codex" / "config.toml").read_text())
     assert data["mcp_servers"]["github"]["command"] == "npx"
@@ -119,7 +119,7 @@ def test_sync_codex_toml(sandbox):
 def test_sync_continue_yaml_list(sandbox):
     (sandbox / ".continue").mkdir()
     engine = SyncEngine(AgentEnv())
-    engine.sync(providers=["continue"])
+    engine.sync(require_admin=False, providers=["continue"])
 
     import yaml
 
@@ -132,7 +132,7 @@ def test_sync_continue_yaml_list(sandbox):
 def test_sync_zed_context_servers(sandbox):
     (sandbox / ".config" / "zed").mkdir(parents=True)
     engine = SyncEngine(AgentEnv())
-    engine.sync(providers=["zed"])
+    engine.sync(require_admin=False, providers=["zed"])
 
     data = json.loads((sandbox / ".config" / "zed" / "settings.json").read_text())
     assert data["context_servers"]["github"]["command"]["path"] == "npx"
@@ -145,7 +145,7 @@ def test_sync_project_scope(tmp_path, sandbox, monkeypatch):
     monkeypatch.chdir(proj)
 
     engine = SyncEngine(AgentEnv())
-    result = engine.sync(providers=["claude", "vscode"], project=True)
+    result = engine.sync(require_admin=False, providers=["claude", "vscode"], project=True)
 
     assert (proj / ".mcp.json").exists()
     mcp = json.loads((proj / ".vscode" / "mcp.json").read_text())
@@ -156,7 +156,7 @@ def test_sync_project_scope(tmp_path, sandbox, monkeypatch):
 
 def test_sync_unknown_provider(sandbox):
     engine = SyncEngine(AgentEnv())
-    result = engine.sync(providers=["nonexistent"])
+    result = engine.sync(require_admin=False, providers=["nonexistent"])
     assert result.actions[0].status == "error"
 
 
@@ -168,7 +168,7 @@ def test_sync_mcp_scoping_include(sandbox):
     config.save_unified(unified)
     config.save_mcp_servers({"github": {"command": "a"}, "other": {"command": "b"}})
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
     assert set(mcp["mcpServers"]) == {"github"}
@@ -183,7 +183,7 @@ def test_sync_mcp_scoping_exclude(sandbox):
     config.save_unified(unified)
     config.save_mcp_servers({"github": {"command": "a"}, "other": {"command": "b"}})
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
     assert set(mcp["mcpServers"]) == {"github"}
@@ -197,7 +197,7 @@ def test_sync_mcp_unscoped_exports_nothing(sandbox):
     unified["providers"] = {"cursor": {}}
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     assert not (sandbox / ".cursor" / "mcp.json").exists()
 
@@ -210,7 +210,7 @@ def test_sync_mcp_exclude_alone_grants_nothing(sandbox):
     unified["providers"] = {"cursor": {"mcp": {"exclude": ["other"]}}}
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     assert not (sandbox / ".cursor" / "mcp.json").exists()
 
@@ -225,7 +225,7 @@ def test_sync_mcp_empty_include_prune_wipes_servers(sandbox):
     unified["providers"] = {"cursor": {"mcp": {"include": []}}}
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"], prune=True)
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"], prune=True)
 
     mcp = json.loads(mcp_path.read_text())
     assert mcp["mcpServers"] == {}
@@ -242,7 +242,7 @@ def test_sync_skips_disabled_servers(sandbox):
         }
     )
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
     assert set(mcp["mcpServers"]) == {"github"}
@@ -262,7 +262,7 @@ def test_sync_disabled_wins_over_include(sandbox):
         }
     )
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     mcp = json.loads((sandbox / ".cursor" / "mcp.json").read_text())
     assert set(mcp["mcpServers"]) == {"github"}
@@ -274,7 +274,7 @@ def test_sync_prune_removes_extra_servers(sandbox):
     mcp_path.write_text(json.dumps({"mcpServers": {"stale": {"command": "old"}}}))
 
     engine = SyncEngine(AgentEnv())
-    engine.sync(providers=["cursor"], prune=True)
+    engine.sync(require_admin=False, providers=["cursor"], prune=True)
 
     mcp = json.loads(mcp_path.read_text())
     assert "stale" not in mcp["mcpServers"]
@@ -290,7 +290,7 @@ def test_sync_cleans_nested_managed_blocks(sandbox):
         "# head\n" f"{BLOCK_BEGIN}\nold outer\n{BLOCK_BEGIN}\nnested\n{BLOCK_END}\n{BLOCK_END}\n"
     )
 
-    SyncEngine(AgentEnv()).sync(providers=["claude"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["claude"])
 
     text = target.read_text()
     assert text.count(BLOCK_BEGIN) == 1
@@ -309,7 +309,7 @@ def test_sync_cleans_nested_blocks_with_interstitial_text(sandbox):
         f"{BLOCK_BEGIN}\nouter\n{BLOCK_BEGIN}\ninner\n{BLOCK_END}\nresidue\n{BLOCK_END}\n"
     )
 
-    SyncEngine(AgentEnv()).sync(providers=["claude"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["claude"])
 
     text = target.read_text()
     assert text.count(BLOCK_BEGIN) == 1
@@ -330,10 +330,10 @@ def test_sync_skips_unchanged_rules(sandbox):
     """A second sync reports rules as skipped instead of rewriting them."""
     (sandbox / ".claude").mkdir()
     engine = SyncEngine(AgentEnv())
-    engine.sync(providers=["claude"])
+    engine.sync(require_admin=False, providers=["claude"])
     before = (sandbox / ".claude" / "CLAUDE.md").stat().st_mtime_ns
 
-    result = engine.sync(providers=["claude"])
+    result = engine.sync(require_admin=False, providers=["claude"])
 
     rules = [a for a in result.actions if a.kind == "rules"]
     assert rules and all(a.status == "skipped" for a in rules)
@@ -347,7 +347,7 @@ def test_sync_never_exports_markers_inside_block(sandbox):
     (config.env.rules).write_text(f"# Rules\n\n{BLOCK_BEGIN}\nsneaky\n{BLOCK_END}\n\nBe nice.\n")
     target = sandbox / ".claude" / "CLAUDE.md"
 
-    SyncEngine(AgentEnv()).sync(providers=["claude"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["claude"])
 
     text = target.read_text()
     assert text.count(BLOCK_BEGIN) == 1
@@ -363,7 +363,7 @@ def test_sync_skills_copies_companion_files(sandbox):
     (skill / "references").mkdir(parents=True)
     (skill / "references" / "deep.md").write_text("# Deep\n")
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     target = sandbox / ".cursor" / "skills" / "demo-skill"
     assert (target / "SKILL.md").exists()
@@ -379,7 +379,7 @@ def test_sync_skills_scoping_include(sandbox):
     unified["providers"] = {"cursor": {"skills": {"include": ["demo-skill"]}}}
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     assert (sandbox / ".cursor" / "skills" / "demo-skill").exists()
     assert not (sandbox / ".cursor" / "skills" / "other-skill").exists()
@@ -394,7 +394,7 @@ def test_sync_skills_scoping_exclude(sandbox):
     unified["providers"] = {"cursor": {"skills": {"exclude": ["other-skill"]}}}
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     assert (sandbox / ".cursor" / "skills" / "demo-skill").exists()
     assert not (sandbox / ".cursor" / "skills" / "other-skill").exists()
@@ -408,7 +408,7 @@ def test_sync_skills_never_syncs_migration_aliases(sandbox):
         d.mkdir()
         (d / "SKILL.md").write_text("# Variant\n")
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     skills = sandbox / ".cursor" / "skills"
     assert (skills / "demo-skill" / "SKILL.md").exists()
@@ -425,7 +425,7 @@ def test_sync_skills_provider_disabled(sandbox):
     unified["providers"] = {"cursor": {"skills": {"enabled": False}}}
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     assert not (sandbox / ".cursor" / "skills").exists()
 
@@ -440,7 +440,7 @@ def test_sync_skills_global_enabled_allowlist(sandbox):
     unified["skills"] = {"enabled": ["demo-skill"], "paths": []}
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     assert (sandbox / ".cursor" / "skills" / "demo-skill").exists()
     assert not (sandbox / ".cursor" / "skills" / "other-skill").exists()
@@ -450,7 +450,7 @@ def test_sync_skills_prune_removes_only_managed(sandbox):
     """--prune removes skills ai-config previously synced but never user dirs."""
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
-    SyncEngine(env).sync(providers=["cursor"])
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
 
     target = sandbox / ".cursor" / "skills"
     assert (target / "demo-skill").exists()
@@ -458,7 +458,7 @@ def test_sync_skills_prune_removes_only_managed(sandbox):
     (target / "user-skill" / "SKILL.md").write_text("# Mine\n")
     shutil.rmtree(env.skills / "demo-skill")  # dropped from unified set
 
-    SyncEngine(env).sync(providers=["cursor"], prune=True)
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"], prune=True)
 
     assert not (target / "demo-skill").exists()
     assert (target / "user-skill" / "SKILL.md").exists()
@@ -467,10 +467,10 @@ def test_sync_skills_prune_removes_only_managed(sandbox):
 def test_sync_skills_without_prune_keeps_stale(sandbox):
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
-    SyncEngine(env).sync(providers=["cursor"])
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
     shutil.rmtree(env.skills / "demo-skill")
 
-    SyncEngine(env).sync(providers=["cursor"])
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
 
     # The link object survives without prune even though its target is gone.
     assert (sandbox / ".cursor" / "skills" / "demo-skill").is_symlink()
@@ -485,7 +485,7 @@ def test_sync_skills_preserves_unmanaged_collision(sandbox):
     (target / "SKILL.md").write_text("# User's own version\n")
     (target / "references" / "mine.md").write_text("precious\n")
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     assert (target / "SKILL.md").read_text() == "# Demo\n"  # synced copy wins the name
     backup = skills / SKILLS_BACKUP_DIR / "demo-skill"
@@ -502,14 +502,14 @@ def test_sync_skills_replaces_managed_dir(sandbox):
     the recorded push: it is backed up rather than silently deleted, then
     relinked wholesale."""
     env = AgentEnv()
-    SyncEngine(env).sync(providers=["cursor"])
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
     target = sandbox / ".cursor" / "skills" / "demo-skill"
     target.unlink()
     target.mkdir()
     (target / "SKILL.md").write_text("# Demo\n")
     (target / "user-added.md").write_text("mine\n")
 
-    SyncEngine(env).sync(providers=["cursor"])
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
 
     assert not (target / "user-added.md").exists()
     backup = sandbox / ".cursor" / "skills" / SKILLS_BACKUP_DIR / "demo-skill"
@@ -523,7 +523,7 @@ def test_sync_skills_backs_up_stray_file(sandbox):
     skills.mkdir(parents=True)
     (skills / "demo-skill").write_text("stray file\n")
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     assert (skills / "demo-skill" / "SKILL.md").exists()
     assert (skills / SKILLS_BACKUP_DIR / "demo-skill").read_text() == "stray file\n"
@@ -532,12 +532,12 @@ def test_sync_skills_backs_up_stray_file(sandbox):
 def test_sync_skills_unlinks_file_at_managed_path(sandbox):
     """A file left at a managed path is unlinked, not rmtree'd."""
     env = AgentEnv()
-    SyncEngine(env).sync(providers=["cursor"])
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
     skills = sandbox / ".cursor" / "skills"
     (skills / "demo-skill").unlink()
     (skills / "demo-skill").write_text("stray\n")
 
-    SyncEngine(env).sync(providers=["cursor"])
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
 
     assert (skills / "demo-skill" / "SKILL.md").exists()
     assert not (skills / SKILLS_BACKUP_DIR).exists()
@@ -551,7 +551,7 @@ def test_sync_skills_empty_scope_creates_nothing(sandbox):
     unified["providers"] = {"cursor": {"skills": {"exclude": ["demo-skill"]}}}
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     assert not (sandbox / ".cursor" / "skills").exists()
 
@@ -561,7 +561,7 @@ def test_sync_without_prune_keeps_extra_servers(sandbox):
     mcp_path = sandbox / ".cursor" / "mcp.json"
     mcp_path.write_text(json.dumps({"mcpServers": {"stale": {"command": "old"}}}))
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     mcp = json.loads(mcp_path.read_text())
     assert "stale" in mcp["mcpServers"]
@@ -574,7 +574,7 @@ def test_sync_prune_dry_run_reports_removal(sandbox):
     mcp_path = sandbox / ".cursor" / "mcp.json"
     mcp_path.write_text(json.dumps({"mcpServers": {"stale": {"command": "old"}}}))
 
-    result = SyncEngine(AgentEnv()).sync(providers=["cursor"], prune=True, dry_run=True)
+    result = SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"], prune=True, dry_run=True)
 
     assert any("stale" in a.detail for a in result.actions)
     assert json.loads(mcp_path.read_text())["mcpServers"]["stale"]
@@ -591,7 +591,7 @@ def test_detect_installed_in_sandbox(sandbox):
 def test_bare_sync_writes_nothing_without_optin(sandbox):
     """Detected-but-not-opted-in providers get no writes by default."""
     (sandbox / ".cursor").mkdir()
-    result = SyncEngine(AgentEnv()).sync()
+    result = SyncEngine(AgentEnv()).sync(require_admin=False)
 
     assert not result.actions
     assert not (sandbox / ".cursor" / "mcp.json").exists()
@@ -605,7 +605,7 @@ def test_bare_sync_writes_opted_in_providers(sandbox):
     unified["providers"] = {"cursor": {"sync": True, "mcp": {"include": ["*"]}}}
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync()
+    SyncEngine(AgentEnv()).sync(require_admin=False)
 
     assert (sandbox / ".cursor" / "mcp.json").exists()
     assert not (sandbox / ".codex" / "config.toml").exists()
@@ -615,7 +615,7 @@ def test_sync_skills_symlinks_by_default(sandbox):
     """User-scope sync links provider skills to the unified source."""
     (sandbox / ".cursor").mkdir()
     env = AgentEnv()
-    SyncEngine(env).sync(providers=["cursor"])
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
 
     target = sandbox / ".cursor" / "skills" / "demo-skill"
     assert target.is_symlink()
@@ -632,7 +632,7 @@ def test_sync_skills_symlink_failure_is_error(sandbox, monkeypatch):
         raise OSError("symlink not permitted")
 
     monkeypatch.setattr(Path, "symlink_to", no_link)
-    result = SyncEngine(env).sync(providers=["cursor"])
+    result = SyncEngine(env).sync(require_admin=False, providers=["cursor"])
 
     target = sandbox / ".cursor" / "skills" / "demo-skill"
     assert not target.exists() and not target.is_symlink()
@@ -649,7 +649,7 @@ def test_sync_skills_relinks_drifted_real_dir(sandbox):
     (skills / "demo-skill" / "references").mkdir(parents=True)
     (skills / "demo-skill" / "SKILL.md").write_text("# My own version\n")
 
-    SyncEngine(env).sync(providers=["cursor"])
+    SyncEngine(env).sync(require_admin=False, providers=["cursor"])
 
     target = skills / "demo-skill"
     assert target.is_symlink()
@@ -663,7 +663,7 @@ def test_sync_rules_links_user_rules_file(sandbox):
     (sandbox / ".claude").mkdir()
     env = AgentEnv()
     (env.rules).write_text("# Rules\n\n- Be nice.\n")
-    SyncEngine(env).sync(providers=["claude"])
+    SyncEngine(env).sync(require_admin=False, providers=["claude"])
 
     target = sandbox / ".claude" / "CLAUDE.md"
     assert target.is_symlink()
@@ -677,7 +677,7 @@ def test_sync_rules_unmanaged_content_keeps_managed_block(sandbox):
     (claude / "CLAUDE.md").write_text("# My own notes\n")
     env = AgentEnv()
     (env.rules).write_text("# Rules\n\n- Be nice.\n")
-    SyncEngine(env).sync(providers=["claude"])
+    SyncEngine(env).sync(require_admin=False, providers=["claude"])
 
     target = claude / "CLAUDE.md"
     assert not target.is_symlink()
@@ -698,7 +698,7 @@ def test_sync_rules_never_writes_through_link_to_unified(sandbox):
     target.symlink_to(env.rules.resolve())
 
     before = (env.rules).read_text()
-    SyncEngine(env).sync(providers=["claude"])
+    SyncEngine(env).sync(require_admin=False, providers=["claude"])
 
     assert (env.rules).read_text() == before
     assert not target.is_symlink()
@@ -717,7 +717,7 @@ def test_sync_rules_user_symlink_content_preserved(sandbox):
     env = AgentEnv()
     (env.rules).write_text("# Rules\n\n- Be nice.\n")
 
-    SyncEngine(env).sync(providers=["claude"])
+    SyncEngine(env).sync(require_admin=False, providers=["claude"])
 
     assert mine.read_text() == "# My own rules\n"
     assert not target.is_symlink()
@@ -737,7 +737,7 @@ def test_sync_rules_link_failure_writes_managed_block(sandbox, monkeypatch):
         raise OSError("privilege not held")
 
     monkeypatch.setattr(Path, "symlink_to", boom)
-    SyncEngine(env).sync(providers=["claude"])
+    SyncEngine(env).sync(require_admin=False, providers=["claude"])
 
     target = sandbox / ".claude" / "CLAUDE.md"
     assert not target.is_symlink()
@@ -757,7 +757,7 @@ def test_sync_skills_include_and_exclude_combine(sandbox):
     }
     config.save_unified(unified)
 
-    SyncEngine(AgentEnv()).sync(providers=["cursor"])
+    SyncEngine(AgentEnv()).sync(require_admin=False, providers=["cursor"])
 
     skills = sandbox / ".cursor" / "skills"
     assert not (skills / "demo-skill").exists()
@@ -779,7 +779,7 @@ def test_sync_skills_failed_relink_keeps_existing_target(sandbox, monkeypatch):
         raise OSError("privilege not held")
 
     monkeypatch.setattr(Path, "symlink_to", boom)
-    result = SyncEngine(env).sync(providers=["cursor"])
+    result = SyncEngine(env).sync(require_admin=False, providers=["cursor"])
 
     assert (target / "SKILL.md").read_text() == "# Provider-local version\n"
     assert not target.is_symlink()

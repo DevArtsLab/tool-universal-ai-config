@@ -597,11 +597,14 @@ class CLI:
         if dry_run:
             print("Dry run: showing what would be written\n")
 
+        # require_admin=False: the CLI gate already ran and privileges
+        # were dropped to the invoking user, so euid is non-root here.
         result = engine.sync(
             providers=providers,
             project=project,
             prune=prune,
             dry_run=dry_run,
+            require_admin=False,
         )
 
         if not result.actions:
@@ -680,16 +683,27 @@ def require_admin_for_sync() -> None:
     user afterwards so exported files stay user-owned.
     """
     if os.name != "posix" or os.geteuid() != 0:
-        print("Error: sync requires admin privileges. Run: sudo ai-config sync ...")
+        print(
+            'Error: sync requires admin privileges. '
+            'Run: sudo "$(command -v ai-config)" sync ...'
+        )
         _notify_sync_attempt()
         sys.exit(1)
     sudo_uid = os.environ.get("SUDO_UID")
     sudo_gid = os.environ.get("SUDO_GID")
     try:
-        uid, gid = int(sudo_uid), int(sudo_gid)
+        uid, gid = int(sudo_uid or ""), int(sudo_gid or "")
     except (TypeError, ValueError):
         print("Warning: SUDO_UID/SUDO_GID unavailable; files will be written as root")
         return
+    import pwd
+
+    pw = pwd.getpwuid(uid)
+    # Root captures HOME=/root under default sudo; restore the invoker's
+    # home before any ~ expansion (AgentEnv, provider paths).
+    os.environ["HOME"] = pw.pw_dir
+    # Real supplementary groups, not root's leftover set.
+    os.initgroups(pw.pw_name, gid)
     os.setgid(gid)
     os.setuid(uid)
 
@@ -794,6 +808,11 @@ def main():
         parser.print_help()
         sys.exit(1)
 
+    if args.command == "sync":
+        # Gate must run before CLI() construction: under sudo, HOME is
+        # /root and AgentEnv would capture root's paths.
+        require_admin_for_sync()
+
     cli = CLI()
 
     if args.command == "init":
@@ -818,7 +837,6 @@ def main():
     elif args.command == "set-config":
         cli.set_config(args.provider, args.key, args.value)
     elif args.command == "sync":
-        require_admin_for_sync()
         cli.sync(
             providers=args.provider,
             project=args.project,
