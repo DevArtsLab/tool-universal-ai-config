@@ -6,6 +6,31 @@ versions follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-02
+
+### Security
+
+- `ai-config sync` now requires root: non-root invocations exit 1,
+  fire a desktop notification (macOS/Linux), and record an attempt log
+  entry
+- `SyncEngine.sync()` raises `PermissionError` for non-root callers
+  unless the CLI gate has verified root; the verification token is
+  single-use and there is no public opt-out
+
+### Changed
+
+- Under sudo, privileges drop back to `SUDO_UID`/`SUDO_GID` (via
+  `os.initgroups`) after the root check; `HOME` resets to the
+  invoker's passwd home only when sudo replaced it with root's home,
+  so a preserved `sudo -E` / `HOME=` override is kept
+- Docs recommend `sudo "$(command -v ai-config)" sync` so user-local
+  installs resolve under sudo's secure PATH
+
+### Removed
+
+- **Breaking:** `sync --all`; there is no more fan-out to every known
+  provider
+
 ## [0.3.1] - 2026-10-30
 
 ### Security
