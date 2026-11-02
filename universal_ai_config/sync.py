@@ -5,6 +5,7 @@ provider's native locations (MCP files, rules files, skills dirs, config files).
 Migration imports provider -> unified. Sync exports unified -> provider.
 """
 
+import os
 import re
 import shutil
 from dataclasses import dataclass, field
@@ -26,6 +27,26 @@ BLOCK_END = "<!-- END ai-config managed -->"
 SKILLS_MANIFEST = ".ai-config-skills"
 
 _MARKER_RE = re.compile(r"<!-- (BEGIN|END) ai-config managed -->\n?")
+
+# Single-use token set only by the CLI sudo gate after it has verified euid 0,
+# just before it drops privileges to the invoking user. The first sync() call
+# consumes it, so later calls in the same (now unprivileged) process are gated
+# again. There is deliberately no public opt-out parameter on SyncEngine.sync().
+_admin_verified = False
+
+
+def _require_admin() -> None:
+    global _admin_verified
+    if _admin_verified:
+        _admin_verified = False
+        return
+    if os.name != "posix" or not hasattr(os, "geteuid"):
+        return
+    if os.geteuid() != 0:
+        raise PermissionError(
+            'sync requires admin privileges; run: sudo "$(command -v ai-config)" sync'
+        )
+
 
 # Holds user-owned skills moved aside by a sync. Kept in a hidden dir one
 # level deeper than the skills themselves so no provider (or a later
@@ -157,10 +178,12 @@ class SyncEngine:
         self,
         providers: Optional[List[str]] = None,
         project: bool = False,
-        all_providers: bool = False,
         prune: bool = False,
         dry_run: bool = False,
     ) -> SyncResult:
+        # Guard at the API level too, not just the CLI dispatch: an
+        # unattended process importing SyncEngine must hit the same wall.
+        _require_admin()
         result = SyncResult()
 
         project_root = find_project_root() if project else None
@@ -182,8 +205,6 @@ class SyncEngine:
             for name in unknown:
                 result.add(name, "-", Path(""), "error", "unknown provider")
             targets = [p for p in providers if p in PROVIDERS]
-        elif all_providers:
-            targets = list(PROVIDERS.keys())
         else:
             # Export is opt-in: only providers with providers.<name>.sync: true
             # in the unified config receive writes. Detection alone is never
@@ -197,8 +218,8 @@ class SyncEngine:
                 print(
                     "No providers opted in to sync. Set "
                     '"providers.<name>.sync": true in '
-                    "~/.agents/config/config.json, or pass --provider <name> / "
-                    "--all for an explicit one-off export."
+                    "~/.agents/config/config.json, or pass --provider <name> "
+                    "for an explicit one-off export."
                 )
         rules_text = self._read_rules(project_root)
         skills_dir = (

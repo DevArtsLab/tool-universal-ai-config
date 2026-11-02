@@ -3,8 +3,11 @@ CLI interface for universal AI configuration management.
 """
 
 import json
+import os
 import shutil
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 from . import __version__
@@ -13,6 +16,7 @@ from .config import UnifiedConfig, ConfigError
 from .lockfile import LOCK_NAME, SkillsLock, dir_hash
 from .migration import ProviderMigrator, MigrationError, SKILL_CONFLICTS_DIR
 from .providers import PROVIDERS, expand
+from . import sync as sync_module
 from .sync import SyncEngine
 
 
@@ -585,7 +589,6 @@ class CLI:
         self,
         providers=None,
         project=False,
-        all_providers=False,
         prune=False,
         dry_run=False,
     ) -> None:
@@ -598,7 +601,6 @@ class CLI:
         result = engine.sync(
             providers=providers,
             project=project,
-            all_providers=all_providers,
             prune=prune,
             dry_run=dry_run,
         )
@@ -633,6 +635,77 @@ class CLI:
             print(f"\n✓ Synced {written} file(s)" + (f", {errors} error(s)" if errors else ""))
         if errors:
             sys.exit(1)
+
+
+def _notify_sync_attempt() -> None:
+    """Alert the user when a non-root process tries to run sync.
+
+    Best-effort: notification to the macOS UI plus an append-only log so
+    attempts are visible even if the UI alert is missed.
+    """
+    when = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    message = f"ai-config sync attempt requires admin privileges at {when}"
+    try:
+        if sys.platform == "darwin":
+            cmd = [
+                "osascript",
+                "-e",
+                f'display notification "{message}" with title "ai-config" sound name "Funk"',
+            ]
+        elif sys.platform.startswith("linux"):
+            cmd = ["notify-send", "ai-config", message]
+        else:
+            cmd = None
+        if cmd:
+            subprocess.run(cmd, check=False, timeout=5, capture_output=True)
+    except Exception:
+        pass
+    try:
+        log = Path.home() / ".agents" / "state" / "sync-attempts.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a") as f:
+            f.write(
+                f"{datetime.now(timezone.utc).isoformat()} "
+                f"uid={os.getuid()} pid={os.getpid()} ppid={os.getppid()} cwd={os.getcwd()}\n"
+            )
+    except Exception:
+        pass
+
+
+def require_admin_for_sync() -> None:
+    """Gate sync behind sudo.
+
+    Sync writes outside the unified store (provider dirs across $HOME and
+    projects). Requiring root keeps unattended agents from triggering it:
+    they cannot supply a password. Privileges drop back to the invoking
+    user afterwards so exported files stay user-owned.
+    """
+    if os.name != "posix" or os.geteuid() != 0:
+        print("Error: sync requires admin privileges.")
+        print('Run: sudo "$(command -v ai-config)" sync ...')
+        _notify_sync_attempt()
+        sys.exit(1)
+    sync_module._admin_verified = True
+    sudo_uid = os.environ.get("SUDO_UID")
+    sudo_gid = os.environ.get("SUDO_GID")
+    try:
+        uid, gid = int(sudo_uid or ""), int(sudo_gid or "")
+    except (TypeError, ValueError):
+        print("Warning: SUDO_UID/SUDO_GID unavailable; files will be written as root")
+        return
+    import pwd
+
+    pw = pwd.getpwuid(uid)
+    # Default sudo replaces HOME with root's home; restore the invoker's
+    # home before any ~ expansion (AgentEnv, provider paths). A HOME that
+    # sudo preserved (sudo -E, env_keep) is an intentional override: keep it.
+    home = os.environ.get("HOME")
+    if not home or os.path.realpath(home) == os.path.realpath(pwd.getpwuid(0).pw_dir):
+        os.environ["HOME"] = pw.pw_dir
+    # Real supplementary groups, not root's leftover set.
+    os.initgroups(pw.pw_name, gid)
+    os.setgid(gid)
+    os.setuid(uid)
 
 
 def main():
@@ -709,7 +782,7 @@ def main():
     # sync command
     sync_parser = subparsers.add_parser(
         "sync",
-        help="Export unified config to providers opted in via providers.<name>.sync (or use --provider/--all)",
+        help="Export unified config to providers opted in via providers.<name>.sync (or use --provider). Requires sudo.",
     )
     sync_parser.add_argument(
         "--provider", action="append", help="Sync only this provider (repeatable)"
@@ -718,12 +791,6 @@ def main():
         "--project",
         action="store_true",
         help="Sync project-level targets (.cursor/, .vscode/, etc.)",
-    )
-    sync_parser.add_argument(
-        "--all",
-        dest="all_providers",
-        action="store_true",
-        help="Sync to all known providers, even if not detected",
     )
     sync_parser.add_argument(
         "--prune",
@@ -740,6 +807,11 @@ def main():
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    if args.command == "sync":
+        # Gate must run before CLI() construction: under sudo, HOME is
+        # /root and AgentEnv would capture root's paths.
+        require_admin_for_sync()
 
     cli = CLI()
 
@@ -768,7 +840,6 @@ def main():
         cli.sync(
             providers=args.provider,
             project=args.project,
-            all_providers=args.all_providers,
             prune=args.prune,
             dry_run=args.dry_run,
         )
