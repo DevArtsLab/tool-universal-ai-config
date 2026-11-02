@@ -685,9 +685,13 @@ def require_admin_for_sync() -> None:
         sys.exit(1)
     sudo_uid = os.environ.get("SUDO_UID")
     sudo_gid = os.environ.get("SUDO_GID")
-    if sudo_uid and sudo_gid:
-        os.setgid(int(sudo_gid))
-        os.setuid(int(sudo_uid))
+    try:
+        uid, gid = int(sudo_uid), int(sudo_gid)
+    except (TypeError, ValueError):
+        print("Warning: SUDO_UID/SUDO_GID unavailable; files will be written as root")
+        return
+    os.setgid(gid)
+    os.setuid(uid)
 
 
 def main():
