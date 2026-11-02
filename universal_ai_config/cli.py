@@ -642,17 +642,21 @@ def _notify_sync_attempt() -> None:
     Best-effort: notification to the macOS UI plus an append-only log so
     attempts are visible even if the UI alert is missed.
     """
+    when = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+    message = f"ai-config sync attempt requires admin privileges at {when}"
     try:
-        subprocess.run(
-            [
+        if sys.platform == "darwin":
+            cmd = [
                 "osascript",
                 "-e",
-                'display notification "ai-config sync attempted without admin privileges" with title "ai-config" sound name "Funk"',
-            ],
-            check=False,
-            timeout=5,
-            capture_output=True,
-        )
+                f'display notification "{message}" with title "ai-config" sound name "Funk"',
+            ]
+        elif sys.platform.startswith("linux"):
+            cmd = ["notify-send", "ai-config", message]
+        else:
+            cmd = None
+        if cmd:
+            subprocess.run(cmd, check=False, timeout=5, capture_output=True)
     except Exception:
         pass
     try:
