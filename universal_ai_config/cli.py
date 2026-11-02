@@ -5,7 +5,9 @@ CLI interface for universal AI configuration management.
 import json
 import os
 import shutil
+import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
 from . import __version__
@@ -634,6 +636,37 @@ class CLI:
             sys.exit(1)
 
 
+def _notify_sync_attempt() -> None:
+    """Alert the user when a non-root process tries to run sync.
+
+    Best-effort: notification to the macOS UI plus an append-only log so
+    attempts are visible even if the UI alert is missed.
+    """
+    try:
+        subprocess.run(
+            [
+                "osascript",
+                "-e",
+                'display notification "ai-config sync attempted without admin privileges" with title "ai-config" sound name "Funk"',
+            ],
+            check=False,
+            timeout=5,
+            capture_output=True,
+        )
+    except Exception:
+        pass
+    try:
+        log = Path.home() / ".agents" / "state" / "sync-attempts.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        with log.open("a") as f:
+            f.write(
+                f"{datetime.now(timezone.utc).isoformat()} "
+                f"uid={os.getuid()} pid={os.getpid()} ppid={os.getppid()} cwd={os.getcwd()}\n"
+            )
+    except Exception:
+        pass
+
+
 def require_admin_for_sync() -> None:
     """Gate sync behind sudo.
 
@@ -644,6 +677,7 @@ def require_admin_for_sync() -> None:
     """
     if os.name != "posix" or os.geteuid() != 0:
         print("Error: sync requires admin privileges. Run: sudo ai-config sync ...")
+        _notify_sync_attempt()
         sys.exit(1)
     sudo_uid = os.environ.get("SUDO_UID")
     sudo_gid = os.environ.get("SUDO_GID")
